@@ -1,17 +1,16 @@
-// The physics of a cosmos: N-body gravity (Barnes–Hut), merging on contact,
-// and the optional laws the player unlocks. Plain script so it also runs in Node.
+// The physics of one level: a sealed box of dust obeying real equations with this
+// level's constants, and you, a black hole, steering through it.
+// Plain script so it also runs in Node.
 (function (MOTE) {
   'use strict';
 
-  const WORLD_R = 260;          // radius of the initial dust cloud
-  const ESCAPE_R = WORLD_R * 3; // beyond this, mass is lost to the void
-  const EPS2 = 9;               // gravitational softening, squared
-  const THETA2 = 0.7 * 0.7;     // Barnes–Hut opening angle, squared
+  const DUST = 0, BODY = 1, STAR = 2;
+  const BODY_MASS = 4;     // a clump heavier than this is a body
+  const SHRED_MASS = 8;    // bodies and stars this heavy can be torn apart by tides
+  const EPS2 = 4;          // gravitational softening, squared
+  const THETA2 = 0.7 * 0.7; // Barnes–Hut opening angle, squared
   const MAX_DEPTH = 24;
-  const CELL = 6;               // collision grid cell size
-
-  const DUST = 0, BODY = 1, STAR = 2, HOLE = 3;
-  const BODY_MASS = 4;          // dust heavier than this is a body
+  const CELL = 6;          // collision grid cell size
 
   function rng(seed) {
     let a = seed >>> 0;
@@ -25,24 +24,22 @@
   }
 
   function radiusFor(m, kind) {
-    if (kind === STAR) return 1.3 * Math.cbrt(m);
-    if (kind === HOLE) return 0.5 * Math.cbrt(m);
-    return 0.9 * Math.cbrt(m);
+    return (kind === STAR ? 1.1 : 0.9) * Math.cbrt(m);
   }
 
   class Sim {
-    constructor(count, seed) {
-      this.alloc(count);
-      this.seed = seed;
+    constructor(level) {
+      this.k = level.constants;
+      this.W = level.W; this.H = level.H;
+      this.alloc(level.count);
       this.time = 0;
-      this.lostMass = 0;
       this.events = [];
-      this.laws = {
-        G: 1.5, capture: 1, stick: 0.5, cooling: 0, vortex: 0,
-        starMass: Infinity, holeMass: Infinity, radiance: 0, halo: 0, lifespan: 0,
-      };
-      this.hand = null; // {x, y, sign}
-      this.bigBang(seed);
+      this.stats = { eaten: 0, starsFormed: 0, supernovae: 0, shredded: 0 };
+      this.control = null; // { vx, vy } desired velocity, or null to coast
+      this.evaporated = false;
+      const start = level.start || { x: 0, y: 0 };
+      this.bh = { x: start.x, y: start.y, vx: 0, vy: 0, ax: 0, ay: 0, m: this.k.M0, mdot: 0, lum: 0, net: 0, eddington: 0 };
+      this.seed(level.seed);
     }
 
     alloc(cap) {
@@ -52,9 +49,10 @@
       this.vx = new Float64Array(cap); this.vy = new Float64Array(cap);
       this.ax = new Float64Array(cap); this.ay = new Float64Array(cap);
       this.m = new Float64Array(cap); this.r = new Float64Array(cap);
-      this.kind = new Uint8Array(cap);
       this.age = new Float64Array(cap);
+      this.kind = new Uint8Array(cap);
       this.dead = new Uint8Array(cap);
+      this.next = new Int32Array(cap);
       this.allocTree(cap * 4 + 64);
     }
 
@@ -69,24 +67,32 @@
       this.stack = new Int32Array(size);
     }
 
-    // Chaos with a few hidden eddies, so every seed collapses differently.
-    bigBang(seed) {
+    // Event horizon: r_s = 2GM / c².
+    horizon() { return 2 * this.k.G * this.bh.m / (this.k.c * this.k.c); }
+
+    // Roche limit for a fluid body of mass m and radius r: d = 2.44 · r · (M / m)^(1/3).
+    roche(m, r) { return 2.44 * r * Math.cbrt(this.bh.m / m); }
+
+    // A box of gas at temperature T: thermal motion plus turbulent eddies.
+    seed(seed) {
       const rand = rng(seed);
+      const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+      const hw = this.W / 2 - 2, hh = this.H / 2 - 2;
       const eddies = [];
-      const nEddies = 3 + Math.floor(rand() * 4);
+      const nEddies = 6 + Math.floor(rand() * 6);
       for (let k = 0; k < nEddies; k++) {
-        const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * WORLD_R * 0.8;
         eddies.push({
-          x: Math.cos(a) * d, y: Math.sin(a) * d,
-          s: (rand() < 0.5 ? -1 : 1) * (0.4 + rand() * 0.9),
-          w: 40 + rand() * 90,
+          x: (rand() - 0.5) * this.W * 0.9, y: (rand() - 0.5) * this.H * 0.9,
+          s: (rand() < 0.5 ? -1 : 1) * (3 + rand() * 5),
+          w: 35 + rand() * 70,
         });
       }
-      let px = 0, py = 0;
+      const sigma = this.k.sigma / Math.SQRT2;
       for (let i = 0; i < this.cap; i++) {
-        const a = rand() * Math.PI * 2, d = Math.sqrt(rand()) * WORLD_R;
-        const x = Math.cos(a) * d, y = Math.sin(a) * d;
-        let vx = (rand() - 0.5) * 5, vy = (rand() - 0.5) * 5;
+        let x, y;
+        do { x = (rand() * 2 - 1) * hw; y = (rand() * 2 - 1) * hh; }
+        while ((x - this.bh.x) ** 2 + (y - this.bh.y) ** 2 < 50 * 50);
+        let vx = gauss() * sigma, vy = gauss() * sigma;
         for (const e of eddies) {
           const dx = x - e.x, dy = y - e.y;
           const f = e.s * Math.exp(-(dx * dx + dy * dy) / (2 * e.w * e.w));
@@ -95,14 +101,11 @@
         const m = 0.6 + rand() * 0.8;
         this.x[i] = x; this.y[i] = y; this.vx[i] = vx; this.vy[i] = vy;
         this.m[i] = m; this.kind[i] = DUST; this.r[i] = radiusFor(m, DUST); this.age[i] = 0;
-        px += m * vx; py += m * vy;
       }
       this.n = this.cap;
-      // Zero net momentum so the cosmos stays on screen.
-      let total = 0;
-      for (let i = 0; i < this.n; i++) total += this.m[i];
-      for (let i = 0; i < this.n; i++) { this.vx[i] -= px / total; this.vy[i] -= py / total; }
     }
+
+    // ---- Gravity: Barnes–Hut for the dust, direct sums for the black hole ----
 
     buildTree() {
       const n = this.n;
@@ -133,10 +136,9 @@
     }
 
     growTree() {
-      const old = this, size = this.tCap * 2;
       const keep = ['tCx', 'tCy', 'tHalf', 'tMass', 'tMx', 'tMy', 'tChild', 'tBody'];
-      const saved = keep.map((key) => old[key]);
-      this.allocTree(size);
+      const saved = keep.map((key) => this[key]);
+      this.allocTree(this.tCap * 2);
       keep.forEach((key, idx) => this[key].set(saved[idx]));
     }
 
@@ -170,10 +172,13 @@
       }
     }
 
+    // F = G·m₁m₂ / r², softened.
     gravity() {
-      const G = this.laws.G, n = this.n, stack = this.stack;
+      const G = this.k.G, n = this.n, stack = this.stack, bh = this.bh;
+      const GM = G * bh.m;
+      let bax = 0, bay = 0;
       for (let i = 0; i < n; i++) {
-        const xi = this.x[i], yi = this.y[i], mi = this.m[i];
+        const xi = this.x[i], yi = this.y[i];
         let ax = 0, ay = 0, sp = 0;
         stack[sp++] = 0;
         while (sp > 0) {
@@ -186,10 +191,7 @@
           if (leaf && this.tBody[k] === i) continue;
           const size = this.tHalf[k] * 2;
           if (leaf || size * size < THETA2 * d2) {
-            // Heavy neighbours get a wider soft core, so close passes by a hole
-            // don't fling stars out of the universe on a coarse timestep.
-            const soft = leaf ? EPS2 + 0.05 * Math.max(mass, mi) : EPS2;
-            const inv = 1 / Math.sqrt(d2 + soft);
+            const inv = 1 / Math.sqrt(d2 + EPS2);
             const f = G * mass * inv * inv * inv;
             ax += f * dx; ay += f * dy;
           } else {
@@ -197,102 +199,121 @@
             stack[sp++] = c; stack[sp++] = c + 1; stack[sp++] = c + 2; stack[sp++] = c + 3;
           }
         }
+        // The black hole pulls on everything, and everything pulls back on it.
+        const dx = bh.x - xi, dy = bh.y - yi;
+        const inv = 1 / Math.sqrt(dx * dx + dy * dy + EPS2), inv3 = inv * inv * inv;
+        ax += GM * inv3 * dx; ay += GM * inv3 * dy;
+        bax -= G * this.m[i] * inv3 * dx; bay -= G * this.m[i] * inv3 * dy;
         this.ax[i] = ax; this.ay[i] = ay;
       }
+      bh.ax = bax; bh.ay = bay;
     }
 
-    // Laws beyond gravity: dissipation, vortex, dark halo, radiation, the hand.
-    extraForces() {
-      const L = this.laws, n = this.n;
-      const halo2 = L.halo * L.halo;
-      for (let i = 0; i < n; i++) {
-        const k = this.kind[i];
-        const x = this.x[i], y = this.y[i];
-        const r2 = x * x + y * y + 1, r = Math.sqrt(r2);
-        if (halo2 > 0) {
-          const f = halo2 / (r2 + 2500);
-          this.ax[i] -= f * x; this.ay[i] -= f * y;
-        }
-        if (k >= STAR) continue;
-        const rx = x / r, ry = y / r;
-        const vr = this.vx[i] * rx + this.vy[i] * ry;
-        if (L.cooling > 0) {
-          // Dissipation bleeds off radial motion: orbits settle and circularise.
-          this.ax[i] -= L.cooling * vr * rx; this.ay[i] -= L.cooling * vr * ry;
-        }
-        if (L.vortex > 0) {
-          // Nudge toward a shared sense of rotation, at the local orbital speed.
-          const tx = -ry, ty = rx;
-          const vt = this.vx[i] * tx + this.vy[i] * ty;
-          const inward = Math.max(0, -(this.ax[i] * rx + this.ay[i] * ry));
-          const target = L.vortex * Math.sqrt(inward * r);
-          const f = (target - vt) * 0.25 * L.vortex;
-          this.ax[i] += f * tx; this.ay[i] += f * ty;
-        }
-      }
-      if (L.radiance > 0) {
-        for (let s = 0; s < n; s++) {
-          if (this.kind[s] !== STAR || this.m[s] < 6) continue;
-          const lum = L.radiance * Math.pow(this.m[s] / 20, 1.5);
-          const sx = this.x[s], sy = this.y[s];
-          for (let i = 0; i < n; i++) {
-            if (this.kind[i] !== DUST) continue;
-            const dx = this.x[i] - sx, dy = this.y[i] - sy;
-            const d2 = dx * dx + dy * dy;
-            if (d2 > 14400) continue;
-            const inv = 1 / Math.sqrt(d2 + 25);
-            const f = lum * inv * inv * inv;
-            this.ax[i] += f * dx; this.ay[i] += f * dy;
-          }
-        }
-      }
-      const h = this.hand;
-      if (h) {
-        const strength = 900 * h.sign;
+    // ---- Everything that isn't gravity ----
+
+    forces() {
+      const k = this.k, n = this.n, bh = this.bh;
+      // Gas drag on everything not yet a star: dv/dt = −γv.
+      if (k.gamma > 0) {
         for (let i = 0; i < n; i++) {
-          if (this.kind[i] >= STAR) continue;
-          const dx = h.x - this.x[i], dy = h.y - this.y[i];
-          const d2 = dx * dx + dy * dy;
-          if (d2 > 14400) continue;
-          const f = strength / (d2 + 400) / Math.sqrt(this.m[i]);
-          this.ax[i] += f * dx; this.ay[i] += f * dy;
-          // A gathering hand also calms what it holds, so matter collects instead of slingshotting.
-          if (h.sign > 0) {
-            const calm = 1.5 * (1 - d2 / 14400);
-            this.ax[i] -= calm * this.vx[i]; this.ay[i] -= calm * this.vy[i];
-          }
+          if (this.kind[i] === STAR) continue;
+          this.ax[i] -= k.gamma * this.vx[i]; this.ay[i] -= k.gamma * this.vy[i];
         }
+      }
+      // Starlight pushes gas away: L ∝ M^3.5, pressure ∝ L / r², weaker on bigger clumps.
+      for (let s = 0; s < n; s++) {
+        if (this.kind[s] !== STAR) continue;
+        const lum = Math.min(20000, k.kappa * 1200 * Math.pow(this.m[s] / 100, 3.5));
+        this.push(this.x[s], this.y[s], lum, 25, 120);
+      }
+      // Accretion shines: L = η·Ṁc². Against the Eddington luminosity L_Edd = λM, its
+      // radiation pressure on gas is (L / L_Edd) times your gravity: past 1, you blow
+      // your own food away.
+      bh.eddington = bh.lum / (k.lambda * bh.m);
+      if (bh.eddington > 0.02) {
+        const rs = this.horizon();
+        this.push(bh.x, bh.y, bh.eddington * k.G * bh.m, 4 * rs * rs + 4, 220);
+      }
+      // Thrust: steer toward the desired velocity, with a force that doesn't grow
+      // as fast as your mass, so heavier means more sluggish (a = F / M).
+      const c = this.control;
+      bh.thrusting = false;
+      if (c) {
+        const aMax = k.thrust * Math.sqrt(k.M0 / bh.m);
+        let ax = (c.vx - bh.vx) * 5, ay = (c.vy - bh.vy) * 5;
+        const a = Math.hypot(ax, ay);
+        if (a > aMax) { ax *= aMax / a; ay *= aMax / a; }
+        bh.ax += ax; bh.ay += ay;
+        bh.thrusting = a > 1;
       }
     }
+
+    push(sx, sy, lum, soft, range) {
+      const range2 = range * range;
+      for (let i = 0; i < this.n; i++) {
+        if (this.kind[i] === STAR) continue;
+        const dx = this.x[i] - sx, dy = this.y[i] - sy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > range2) continue;
+        const inv = 1 / Math.sqrt(d2 + soft);
+        const f = lum * inv * inv * inv / Math.cbrt(this.m[i]);
+        this.ax[i] += f * dx; this.ay[i] += f * dy;
+      }
+    }
+
+    // Move everything and bounce off the walls. (c sets the horizon and the light
+    // of accretion here; it isn't enforced as a speed limit, only a numerical cap.)
+    integrate(dt) {
+      const k = this.k, vmax = 400, c2 = vmax * vmax, hw = this.W / 2, hh = this.H / 2;
+      const ew = 0.5 + 0.5 * k.e;
+      for (let i = 0; i < this.n; i++) {
+        let vx = this.vx[i] + this.ax[i] * dt, vy = this.vy[i] + this.ay[i] * dt;
+        const v2 = vx * vx + vy * vy;
+        if (v2 > c2) { const s = vmax / Math.sqrt(v2); vx *= s; vy *= s; }
+        let x = this.x[i] + vx * dt, y = this.y[i] + vy * dt;
+        const r = this.r[i];
+        if (x < -hw + r) { x = -hw + r; vx = Math.abs(vx) * ew; }
+        else if (x > hw - r) { x = hw - r; vx = -Math.abs(vx) * ew; }
+        if (y < -hh + r) { y = -hh + r; vy = Math.abs(vy) * ew; }
+        else if (y > hh - r) { y = hh - r; vy = -Math.abs(vy) * ew; }
+        this.x[i] = x; this.y[i] = y; this.vx[i] = vx; this.vy[i] = vy;
+      }
+      const bh = this.bh, rs = Math.max(2, this.horizon());
+      bh.vx += bh.ax * dt; bh.vy += bh.ay * dt;
+      const v2 = bh.vx * bh.vx + bh.vy * bh.vy;
+      if (v2 > c2) { const s = vmax / Math.sqrt(v2); bh.vx *= s; bh.vy *= s; }
+      bh.x += bh.vx * dt; bh.y += bh.vy * dt;
+      if (bh.x < -hw + rs) { bh.x = -hw + rs; bh.vx = Math.abs(bh.vx) * ew; }
+      else if (bh.x > hw - rs) { bh.x = hw - rs; bh.vx = -Math.abs(bh.vx) * ew; }
+      if (bh.y < -hh + rs) { bh.y = -hh + rs; bh.vy = Math.abs(bh.vy) * ew; }
+      else if (bh.y > hh - rs) { bh.y = hh - rs; bh.vy = -Math.abs(bh.vy) * ew; }
+    }
+
+    // ---- Collisions: slow encounters stick, fast ones bounce with restitution e ----
 
     collide() {
-      const n = this.n, capture = this.laws.capture;
+      const n = this.n;
       if (n < 2) return;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (let i = 0; i < n; i++) {
-        const x = this.x[i], y = this.y[i];
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-      }
-      const cols = Math.floor((maxX - minX) / CELL) + 1;
-      const rows = Math.floor((maxY - minY) / CELL) + 1;
+      const hw = this.W / 2, hh = this.H / 2;
+      const cols = Math.floor(this.W / CELL) + 1, rows = Math.floor(this.H / CELL) + 1;
       const cells = cols * rows;
-      if (!this.head || this.head.length < cells) this.head = new Int32Array(cells * 2);
-      if (!this.next || this.next.length < this.cap) this.next = new Int32Array(this.cap);
+      if (!this.head || this.head.length < cells) this.head = new Int32Array(cells);
       const head = this.head, next = this.next;
       head.fill(-1, 0, cells);
+      const cellX = (i) => Math.min(cols - 1, Math.max(0, Math.floor((this.x[i] + hw) / CELL)));
+      const cellY = (i) => Math.min(rows - 1, Math.max(0, Math.floor((this.y[i] + hh) / CELL)));
       const big = [];
       for (let i = 0; i < n; i++) {
         this.dead[i] = 0;
-        if (this.r[i] * capture > CELL / 2) { big.push(i); continue; }
-        const c = Math.floor((this.x[i] - minX) / CELL) + Math.floor((this.y[i] - minY) / CELL) * cols;
+        if (this.kind[i] === STAR) continue; // stars are collisionless
+        if (this.r[i] > CELL / 2) { big.push(i); continue; }
+        const c = cellY(i) * cols + cellX(i);
         next[i] = head[c]; head[c] = i;
       }
       let merged = false;
-      // Small against small: neighbouring cells only.
       for (let i = 0; i < n; i++) {
-        if (this.dead[i] || this.r[i] * capture > CELL / 2) continue;
-        const cx = Math.floor((this.x[i] - minX) / CELL), cy = Math.floor((this.y[i] - minY) / CELL);
+        if (this.dead[i] || this.kind[i] === STAR || this.r[i] > CELL / 2) continue;
+        const cx = cellX(i), cy = cellY(i);
         for (let oy = -1; oy <= 1; oy++) {
           const yy = cy + oy;
           if (yy < 0 || yy >= rows) continue;
@@ -301,42 +322,47 @@
             if (xx < 0 || xx >= cols) continue;
             for (let j = head[yy * cols + xx]; j !== -1; j = next[j]) {
               if (j <= i || this.dead[j] || this.dead[i]) continue;
-              if (this.touching(i, j, capture)) { this.merge(i, j); merged = true; }
+              if (this.interact(i, j)) merged = true;
             }
           }
         }
       }
-      // Big bodies sweep against everything.
       for (const i of big) {
         if (this.dead[i]) continue;
         for (let j = 0; j < n; j++) {
-          if (j === i || this.dead[j] || this.dead[i]) continue;
-          if (this.touching(i, j, capture)) { this.merge(i, j); merged = true; }
+          if (j === i || this.dead[j] || this.dead[i] || this.kind[j] === STAR) continue;
+          if (this.interact(i, j)) merged = true;
         }
       }
       if (merged) this.compact();
     }
 
-    touching(i, j, capture) {
-      const dx = this.x[i] - this.x[j], dy = this.y[i] - this.y[j];
-      const ki = this.kind[i], kj = this.kind[j];
-      // Stars are collisionless: they neither collide, accrete, nor fall into holes.
-      if (ki === STAR || kj === STAR) return false;
-      let reach = (this.r[i] + this.r[j]) * capture;
-      if (ki === HOLE || kj === HOLE) reach *= 1.5;
+    interact(i, j) {
+      const dx = this.x[j] - this.x[i], dy = this.y[j] - this.y[i];
+      const reach = this.r[i] + this.r[j];
       const d2 = dx * dx + dy * dy;
       if (d2 >= reach * reach) return false;
-      // Stick only if slow enough: under escape speed, plus whatever cohesion adds.
-      const dvx = this.vx[i] - this.vx[j], dvy = this.vy[i] - this.vy[j];
-      const stick = this.laws.stick;
-      const vesc2 = 2 * this.laws.G * (this.m[i] + this.m[j]) / Math.max(reach, 1);
-      return dvx * dvx + dvy * dvy < vesc2 + stick * stick;
+      const rvx = this.vx[j] - this.vx[i], rvy = this.vy[j] - this.vy[i];
+      const vesc2 = 2 * this.k.G * (this.m[i] + this.m[j]) / Math.max(reach, 0.5);
+      const stick = this.k.stick;
+      if (rvx * rvx + rvy * rvy < vesc2 + stick * stick) { this.merge(i, j); return true; }
+      // Too fast to stick: an inelastic bounce, v′ = −e·v along the line of centres.
+      const d = Math.sqrt(d2) || 1e-6, nx = dx / d, ny = dy / d;
+      const invI = 1 / this.m[i], invJ = 1 / this.m[j];
+      const vn = rvx * nx + rvy * ny;
+      if (vn < 0) {
+        const jimp = -(1 + this.k.e) * vn / (invI + invJ);
+        this.vx[i] -= jimp * invI * nx; this.vy[i] -= jimp * invI * ny;
+        this.vx[j] += jimp * invJ * nx; this.vy[j] += jimp * invJ * ny;
+      }
+      const s = (reach - d) / (invI + invJ);
+      this.x[i] -= nx * s * invI; this.y[i] -= ny * s * invI;
+      this.x[j] += nx * s * invJ; this.y[j] += ny * s * invJ;
+      return false;
     }
 
     merge(i, j) {
-      let keep = i, gone = j;
-      const kj = this.kind[j], ki = this.kind[i];
-      if (kj > ki || (kj === ki && this.m[j] > this.m[i])) { keep = j; gone = i; }
+      const keep = this.m[j] > this.m[i] ? j : i, gone = keep === i ? j : i;
       const ma = this.m[keep], mb = this.m[gone], m = ma + mb;
       this.x[keep] = (this.x[keep] * ma + this.x[gone] * mb) / m;
       this.y[keep] = (this.y[keep] * ma + this.y[gone] * mb) / m;
@@ -348,77 +374,106 @@
       this.dead[gone] = 1;
     }
 
-    // Clumps ignite, stars age and explode, the heaviest leave holes behind.
-    evolve(dt) {
-      const L = this.laws;
-      const n = this.n;
-      let died = false;
-      for (let i = 0; i < n; i++) {
-        const k = this.kind[i], m = this.m[i];
-        if (k === STAR) {
-          this.age[i] += dt;
-          if (L.lifespan > 0 && this.age[i] > L.lifespan * Math.pow(20 / m, 1.5)) {
-            this.supernova(i);
-            if (this.dead[i]) died = true;
-          }
-        } else if (k < STAR && m >= L.starMass) {
-          this.ignite(i);
-        }
+    // ---- The black hole's own physics ----
+
+    // Anything crossing the horizon is gone. Momentum is conserved; a fraction η
+    // of the rest mass is radiated away instead of added, as L = η·Ṁc².
+    feed(dt) {
+      const bh = this.bh, rs = this.horizon(), eta = this.k.eta;
+      let inflow = 0, ate = false;
+      for (let i = 0; i < this.n; i++) {
+        // Stars are compact: they fall in only when their centre crosses the horizon.
+        const reach = this.kind[i] === STAR ? rs : rs + this.r[i];
+        const dx = this.x[i] - bh.x, dy = this.y[i] - bh.y;
+        if (dx * dx + dy * dy > reach * reach) continue;
+        const m = this.m[i], M = bh.m;
+        bh.vx = (bh.vx * M + this.vx[i] * m) / (M + m);
+        bh.vy = (bh.vy * M + this.vy[i] * m) / (M + m);
+        bh.m += m * (1 - eta);
+        inflow += m;
+        this.stats.eaten++;
+        if (this.kind[i] === STAR) this.events.push({ type: 'swallow', x: this.x[i], y: this.y[i], m });
+        this.dead[i] = 1; ate = true;
       }
-      if (died) this.compact();
+      if (ate) this.compact();
+      bh.mdot += (inflow / dt - bh.mdot) * Math.min(1, dt / 0.8);
+      bh.lum = eta * bh.mdot * this.k.c * this.k.c;
+      return inflow * (1 - eta);
     }
 
-    // A collapsing clump fragments into a cluster of stars: many small, a few heavy.
-    ignite(i) {
-      const M = this.m[i], x = this.x[i], y = this.y[i], vx = this.vx[i], vy = this.vy[i];
-      const count = Math.max(1, Math.min(Math.round(M / 3), 48, this.cap - this.n + 1));
-      const weights = [];
-      let total = 0;
-      for (let k = 0; k < count; k++) {
-        const w = Math.pow(0.04 + Math.random() * 0.96, -1.35);
-        weights.push(w); total += w;
+    // Inside the Roche limit, tides beat a body's own gravity and stretch it apart.
+    tides() {
+      const bh = this.bh, rs = this.horizon(), n = this.n;
+      for (let i = 0; i < n; i++) {
+        const m = this.m[i];
+        if (this.kind[i] === DUST || m < SHRED_MASS) continue;
+        const roche = this.roche(m, this.r[i]);
+        if (roche <= rs + this.r[i]) continue; // too big a hole: swallowed whole instead
+        const dx = this.x[i] - bh.x, dy = this.y[i] - bh.y;
+        if (dx * dx + dy * dy < roche * roche) this.shred(i, dx, dy);
       }
-      const spread = 2 + Math.sqrt(M) * 0.6;
-      const vOrbit = Math.sqrt(this.laws.G * M / spread) * 0.6;
+    }
+
+    shred(i, dx, dy) {
+      const m = this.m[i], x = this.x[i], y = this.y[i], vx = this.vx[i], vy = this.vy[i];
+      const d = Math.hypot(dx, dy) || 1, rx = dx / d, ry = dy / d;
+      const count = Math.max(2, Math.min(Math.round(m), this.cap - this.n + 1));
+      const span = this.r[i] * 3;
+      this.events.push({ type: 'shred', x, y, m, star: this.kind[i] === STAR });
+      this.stats.shredded++;
       for (let k = 0; k < count; k++) {
         const j = k === 0 ? i : this.n++;
-        const a = Math.random() * Math.PI * 2, d = spread * Math.sqrt(Math.random());
-        const m = M * weights[k] / total;
-        this.x[j] = x + Math.cos(a) * d; this.y[j] = y + Math.sin(a) * d;
-        this.vx[j] = vx - Math.sin(a) * vOrbit * (d / spread) + (Math.random() - 0.5);
-        this.vy[j] = vy + Math.cos(a) * vOrbit * (d / spread) + (Math.random() - 0.5);
-        this.m[j] = m; this.kind[j] = STAR; this.age[j] = Math.random() * 5;
-        this.r[j] = radiusFor(m, STAR); this.dead[j] = 0;
-      }
-      this.events.push({ type: 'ignite', x, y, m: M });
-    }
-
-    // A dying star returns its mass to the cloud as an expanding shell.
-    // Heavy enough, and with Collapse in the laws, its core becomes a hole.
-    supernova(i) {
-      const m = this.m[i], x = this.x[i], y = this.y[i], vx = this.vx[i], vy = this.vy[i];
-      const hole = m >= this.laws.holeMass;
-      const shellMass = hole ? m * 0.5 : m;
-      const count = Math.min(this.cap - this.n, Math.max(4, Math.floor(shellMass / 0.8)), 120);
-      this.events.push({ type: 'supernova', x, y, m });
-      for (let k = 0; k < count; k++) {
-        const a = (k / count) * Math.PI * 2 + Math.random() * 0.3;
-        const sp = 7 + Math.random() * 6;
-        const j = this.n++;
-        const d = this.r[i] + 1 + Math.random() * 2;
-        this.x[j] = x + Math.cos(a) * d; this.y[j] = y + Math.sin(a) * d;
-        this.vx[j] = vx + Math.cos(a) * sp; this.vy[j] = vy + Math.sin(a) * sp;
-        this.m[j] = shellMass / count; this.kind[j] = DUST; this.age[j] = 0;
+        const t = (k / (count - 1)) * 2 - 1; // spaghetti: strung out along the radial line
+        const side = (Math.random() - 0.5) * this.r[i];
+        this.x[j] = x + rx * t * span - ry * side; this.y[j] = y + ry * t * span + rx * side;
+        this.vx[j] = vx + rx * t * 6; this.vy[j] = vy + ry * t * 6;
+        this.m[j] = m / count; this.kind[j] = DUST; this.age[j] = 0;
         this.r[j] = radiusFor(this.m[j], DUST); this.dead[j] = 0;
       }
-      if (hole) {
-        this.m[i] = m - shellMass; this.kind[i] = HOLE; this.age[i] = 0;
-        this.r[i] = radiusFor(this.m[i], HOLE);
-        this.events.push({ type: 'singularity', x, y, m: this.m[i] });
-      } else if (count > 0) {
-        this.dead[i] = 1;
-      } else {
-        this.age[i] = 0; // no room for the shell yet; it burns a while longer
+    }
+
+    // Hawking radiation: dM/dt = −ħc⁴ / (15360·π·G²·M²), folded into one constant.
+    hawking(dt) {
+      const bh = this.bh;
+      const loss = this.k.kH / (bh.m * bh.m) * dt;
+      bh.m -= loss;
+      if (bh.m < this.k.Mfail && !this.evaporated) {
+        this.evaporated = true;
+        this.events.push({ type: 'evaporate', x: bh.x, y: bh.y, m: bh.m });
+      }
+      return loss;
+    }
+
+    // ---- Stars: Jeans collapse, a lifetime of t ∝ M^−2.5, then a supernova ----
+
+    evolve(dt) {
+      const k = this.k, n = this.n;
+      for (let i = 0; i < n; i++) {
+        const kind = this.kind[i], m = this.m[i];
+        if (kind === BODY && m >= k.MJ) {
+          this.kind[i] = STAR; this.r[i] = radiusFor(m, STAR); this.age[i] = 0;
+          this.stats.starsFormed++;
+          this.events.push({ type: 'ignite', x: this.x[i], y: this.y[i], m });
+        } else if (kind === STAR) {
+          this.age[i] += dt;
+          if (this.age[i] > k.tau * Math.pow(m / 100, -2.5)) this.supernova(i);
+        }
+      }
+    }
+
+    supernova(i) {
+      const m = this.m[i], x = this.x[i], y = this.y[i], vx = this.vx[i], vy = this.vy[i];
+      const count = Math.max(6, Math.min(Math.round(m), this.cap - this.n + 1, 160));
+      this.events.push({ type: 'supernova', x, y, m });
+      this.stats.supernovae++;
+      for (let k = 0; k < count; k++) {
+        const j = k === 0 ? i : this.n++;
+        const a = (k / count) * Math.PI * 2 + Math.random() * 0.3;
+        const sp = 14 + Math.random() * 10, d = this.r[i] + Math.random() * 2;
+        this.x[j] = x + Math.cos(a) * d; this.y[j] = y + Math.sin(a) * d;
+        this.vx[j] = vx + Math.cos(a) * sp; this.vy[j] = vy + Math.sin(a) * sp;
+        this.m[j] = m / count; this.kind[j] = DUST; this.age[j] = 0;
+        this.r[j] = radiusFor(this.m[j], DUST); this.dead[j] = 0;
       }
     }
 
@@ -429,8 +484,8 @@
         if (w !== i) {
           this.x[w] = this.x[i]; this.y[w] = this.y[i];
           this.vx[w] = this.vx[i]; this.vy[w] = this.vy[i];
-          this.m[w] = this.m[i]; this.r[w] = this.r[i]; this.kind[w] = this.kind[i];
-          this.age[w] = this.age[i];
+          this.m[w] = this.m[i]; this.r[w] = this.r[i];
+          this.kind[w] = this.kind[i]; this.age[w] = this.age[i];
         }
         this.dead[w] = 0;
         w++;
@@ -439,56 +494,22 @@
     }
 
     step(dt) {
-      if (this.n === 0) return;
-      this.buildTree();
-      this.gravity();
-      this.extraForces();
-      const n = this.n, esc2 = ESCAPE_R * ESCAPE_R;
-      let mass = 0, px = 0, py = 0, mx = 0, my = 0;
-      for (let i = 0; i < n; i++) {
-        this.vx[i] += this.ax[i] * dt; this.vy[i] += this.ay[i] * dt;
-        this.x[i] += this.vx[i] * dt; this.y[i] += this.vy[i] * dt;
-        const m = this.m[i];
-        mass += m; px += m * this.vx[i]; py += m * this.vy[i]; mx += m * this.x[i]; my += m * this.y[i];
-      }
-      // Radiation, vortex and the hand don't conserve momentum, so the cosmos
-      // would slowly drift away. Keep its centre of mass at rest at the origin.
-      const cx = mx / mass, cy = my / mass, cvx = px / mass, cvy = py / mass;
-      let lost = false;
-      for (let i = 0; i < n; i++) {
-        this.x[i] -= cx; this.y[i] -= cy; this.vx[i] -= cvx; this.vy[i] -= cvy;
-        if (this.x[i] * this.x[i] + this.y[i] * this.y[i] > esc2) {
-          this.dead[i] = 1; this.lostMass += this.m[i]; lost = true;
-        }
-      }
-      if (lost) this.compact();
+      if (this.evaporated) return;
+      const bh = this.bh;
+      if (this.n > 0) { this.buildTree(); this.gravity(); } else { bh.ax = 0; bh.ay = 0; }
+      this.forces();
+      this.integrate(dt);
       this.collide();
+      const gained = this.feed(dt);
+      this.tides();
       this.evolve(dt);
+      const lost = this.hawking(dt);
+      bh.net += ((gained - lost) / dt - bh.net) * Math.min(1, dt / 1.5);
       this.time += dt;
-    }
-
-    serialize() {
-      const n = this.n, round = (v) => Math.round(v * 100) / 100;
-      const pack = (arr) => Array.from(arr.subarray(0, n), round);
-      return {
-        seed: this.seed, time: this.time, lostMass: this.lostMass, cap: this.cap,
-        x: pack(this.x), y: pack(this.y), vx: pack(this.vx), vy: pack(this.vy),
-        m: pack(this.m), age: pack(this.age), kind: Array.from(this.kind.subarray(0, n)),
-      };
-    }
-
-    static restore(data) {
-      const sim = new Sim(data.cap, data.seed);
-      const n = data.m.length;
-      sim.x.set(data.x); sim.y.set(data.y); sim.vx.set(data.vx); sim.vy.set(data.vy);
-      sim.m.set(data.m); sim.kind.set(data.kind); if (data.age) sim.age.set(data.age);
-      for (let i = 0; i < n; i++) sim.r[i] = radiusFor(sim.m[i], sim.kind[i]);
-      sim.n = n; sim.time = data.time; sim.lostMass = data.lostMass;
-      return sim;
     }
   }
 
   MOTE.Sim = Sim;
-  MOTE.WORLD_R = WORLD_R;
-  MOTE.KIND = { DUST, BODY, STAR, HOLE };
+  MOTE.rng = rng;
+  MOTE.KIND = { DUST, BODY, STAR };
 })(typeof window !== 'undefined' ? (window.MOTE = window.MOTE || {}) : (globalThis.MOTE = globalThis.MOTE || {}));

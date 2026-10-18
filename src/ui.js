@@ -1,117 +1,101 @@
-// The panels around the sky: laws, meters, goals, the archive.
+// The panels around the arena: HUD, constants, goals, briefings, results, archive.
 (function (MOTE) {
   'use strict';
 
   const $ = (sel) => document.querySelector(sel);
 
-  function fmt(n) {
-    if (n < 1000) return Math.floor(n).toString();
-    const units = ['k', 'M', 'B', 'T'];
-    let u = -1;
-    while (n >= 1000 && u < units.length - 1) { n /= 1000; u++; }
-    return n.toFixed(n < 10 ? 2 : n < 100 ? 1 : 0) + units[u];
+  function sci(v) {
+    const e = Math.floor(Math.log10(v));
+    return `${(v / Math.pow(10, e)).toFixed(1)}×10<sup>${e}</sup>`;
   }
 
-  function roman(n) {
-    const map = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
-      [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
-    let out = '';
-    for (const [v, s] of map) while (n >= v) { out += s; n -= v; }
-    return out;
-  }
+  // Each constant this level rolled, and the real equation it feeds.
+  const CONSTANTS = [
+    { key: 'G', sym: 'G', name: 'Gravitational constant', eq: 'F = G·m₁m₂ / r²', fmt: (v) => v.toFixed(2) },
+    { key: 'c', sym: 'c', name: 'Speed of light', eq: 'r<sub>s</sub> = 2GM / c²', fmt: (v) => v.toFixed(1) },
+    { key: 'T', sym: 'T', name: 'Gas temperature', eq: 'M<sub>J</sub> ∝ (T / G)<sup>3/2</sup>', fmt: (v) => `${Math.round(v * MOTE.KELVIN)} K` },
+    { key: 'gamma', sym: 'γ', name: 'Gas drag', eq: 'dv/dt = −γv', fmt: (v) => v.toFixed(2) },
+    { key: 'e', sym: 'e', name: 'Coefficient of restitution', eq: 'v′ = −e·v', fmt: (v) => v.toFixed(2) },
+    { key: 'eta', sym: 'η', name: 'Radiative efficiency', eq: 'L = η·Ṁc²', fmt: (v) => `${Math.round(v * 100)}%` },
+    { key: 'opacity', sym: 'κ', name: 'Opacity', eq: 'L<sub>Edd</sub> = 4πGMc / κ', fmt: (v) => v.toFixed(2) },
+    { key: 'hbar', sym: 'ħ', name: 'Planck constant', eq: 'dM/dt = −ħc⁴ / 15360πG²M²', fmt: sci },
+    { key: 'tau', sym: 'τ', name: 'Stellar lifetime at 100 M', eq: 't = τ·(M / 100)<sup>−2.5</sup>', fmt: (v) => `${Math.round(v)} s` },
+  ];
 
-  function cardHTML(item) {
-    return `<button class="card" data-id="${item.id}">
-      <div class="top"><span class="name"></span><span class="lvl"></span></div>
-      <div class="desc"></div>
-      <div class="bottom"><span class="effect"></span><span class="cost"></span></div>
-    </button>`;
-  }
+  // What those constants add up to, for this level.
+  const DERIVED = [
+    { sym: 'r<sub>s</sub>', name: 'Your starting event horizon', value: (k) => (2 * k.G * k.M0 / (k.c * k.c)).toFixed(1) },
+    { sym: 'M<sub>J</sub>', name: 'Jeans mass: heavier clumps collapse into stars', value: (k) => `${Math.round(k.MJ)} M` },
+    { sym: 't<sub>ev</sub>', name: 'Time until you evaporate if you never eat', value: (k) => `${Math.round(k.tEvap)} s` },
+    { sym: 'd<sub>R</sub>', name: 'Roche limit: tides tear apart what comes closer', value: () => '2.44·R·(M/m)<sup>1/3</sup>' },
+  ];
 
   class UI {
     constructor(game, renderer) {
       this.game = game;
       this.renderer = renderer;
-      this.timeScale = 1;
-      this.buildLaws();
-      this.buildConstants();
+      this.lastToast = {};
       this.bind();
       game.on((type, data) => this.onEvent(type, data));
-      this.update();
-      this.renderGallery();
-    }
-
-    buildLaws() {
-      const list = $('#law-list');
-      list.innerHTML = MOTE.LAWS.map(cardHTML).join('');
-      list.addEventListener('click', (e) => {
-        const card = e.target.closest('.card');
-        if (card && this.game.buyLaw(card.dataset.id)) this.update();
-      });
-    }
-
-    buildConstants() {
-      const list = $('#constant-list');
-      list.innerHTML = MOTE.CONSTANTS.map(cardHTML).join('');
-      list.addEventListener('click', (e) => {
-        const card = e.target.closest('.card');
-        if (card && this.game.buyConstant(card.dataset.id)) this.updateArchive();
-      });
     }
 
     bind() {
-      const archive = $('#archive'), confirm = $('#confirm-crystal');
       document.querySelectorAll('[data-close]').forEach((b) =>
         b.addEventListener('click', () => b.closest('dialog').close()));
-      $('#archive-btn').addEventListener('click', () => { this.updateArchive(); archive.showModal(); });
-      $('#crystallize').addEventListener('click', () => {
-        if (!this.game.canCrystallize()) return;
-        $('#cc-name').textContent = MOTE.classify(this.game.metrics);
-        $('#cc-gain').textContent = fmt(this.game.stardustGain());
-        confirm.showModal();
+      // Esc on the briefing resumes instead of leaving the game in limbo.
+      $('#briefing').addEventListener('cancel', (e) => { e.preventDefault(); this.launch(); });
+      $('#result').addEventListener('cancel', (e) => e.preventDefault());
+      $('#brief-go').addEventListener('click', () => this.launch());
+      $('#brief-restart').addEventListener('click', () => this.onSetup(false));
+      $('#brief-new').addEventListener('click', () => this.onSetup(true));
+      $('#pause').addEventListener('click', () => this.game.pause());
+      $('#archive-btn').addEventListener('click', () => {
+        this.game.pause();
+        this.renderArchive();
+        $('#archive').showModal();
       });
-      $('#cc-go').addEventListener('click', () => {
-        confirm.close();
-        this.game.crystallize(this.renderer.snapshot());
-      });
-      $('#speed').addEventListener('click', () => {
-        const speeds = [1, 2, 4];
-        const s = this.game.state;
-        s.speed = speeds[(speeds.indexOf(s.speed) + 1) % speeds.length];
-        this.update();
-      });
-      $('#hand-mode').addEventListener('click', () => {
-        this.scatter = !this.scatter;
-        $('#hand-mode').textContent = this.scatter ? 'Scatter' : 'Gather';
-        $('#hand-mode').classList.toggle('scatter', this.scatter);
-      });
-      $('#laws-toggle').addEventListener('click', () => {
-        const open = $('#laws').classList.toggle('open');
-        document.body.classList.toggle('laws-open', open);
-      });
+      $('#archive').addEventListener('close', () => { if (this.game.status === 'paused') this.brief(true); });
+      $('#consts-toggle').addEventListener('click', () => $('#consts').classList.toggle('open'));
       $('#reset').addEventListener('click', () => $('#confirm-reset').showModal());
       $('#reset-go').addEventListener('click', () => {
         this.game.reset();
         $('#confirm-reset').close();
-        archive.close();
-        this.renderGallery();
-        this.update();
+        $('#archive').close();
+        this.onSetup(false);
       });
     }
 
+    // Main asks the UI to (re)build a level; the arena takes the screen's shape.
+    onSetup(reroll) {
+      this.game.setup(this.renderer.aspect(), reroll);
+      this.renderer.clear();
+    }
+
+    launch() {
+      $('#briefing').close();
+      this.game.play();
+    }
+
     onEvent(type, data) {
-      if (type === 'milestone') this.toast(`<b>${data.name}</b> · +${fmt(data.reward)} order`);
-      if (type === 'unlock') {
-        this.toast(`New law: <b>${data.name}</b>`, 'unlock');
-        const card = document.querySelector(`#law-list [data-id="${data.id}"]`);
-        if (card) { card.classList.remove('fresh'); void card.offsetWidth; card.classList.add('fresh'); }
-      }
-      if (type === 'crystallize') {
-        this.toast(`Crystallized <b>${data.name}</b> · +${fmt(data.stardust)} stardust`);
-        this.renderGallery();
-        this.renderer.resize();
-      }
-      this.update();
+      if (type === 'setup') { this.fillLevel(); this.brief(false); }
+      if (type === 'paused') this.brief(true);
+      if (type === 'goal') this.toast(`Goal complete: <b>${data.text}</b>`, 'good');
+      if (type === 'complete') this.showComplete();
+      if (type === 'failed') this.showFailed();
+    }
+
+    // Sim events become toasts, at most one of each kind every couple of seconds.
+    simEvent(ev) {
+      const now = performance.now();
+      if (now - (this.lastToast[ev.type] || 0) < 2500) return;
+      this.lastToast[ev.type] = now;
+      const text = {
+        ignite: ['A clump passed the Jeans mass. <b>A star ignites.</b>', ''],
+        supernova: ['<b>Supernova.</b> A star returns its gas to the box.', ''],
+        shred: [ev.star ? '<b>Tidal disruption.</b> You tore a star apart.' : 'Tides <b>shredded a clump.</b>', 'bad'],
+        swallow: ['<b>Star swallowed</b> whole.', 'bad'],
+      }[ev.type];
+      if (text) this.toast(text[0], text[1]);
     }
 
     toast(html, cls = '') {
@@ -119,75 +103,127 @@
       el.className = `toast ${cls}`;
       el.innerHTML = html;
       $('#toasts').appendChild(el);
-      setTimeout(() => el.remove(), 4600);
+      setTimeout(() => el.remove(), 3700);
       const all = $('#toasts').children;
-      if (all.length > 4) all[0].remove();
+      if (all.length > 3) all[0].remove();
     }
 
-    fillCard(card, item, level, price, wallet, unlocked) {
-      const maxed = level >= item.max;
-      card.classList.toggle('locked', !unlocked);
-      card.classList.toggle('maxed', unlocked && maxed);
-      card.classList.toggle('poor', unlocked && !maxed && wallet < price);
-      card.disabled = !unlocked || maxed || wallet < price;
-      card.querySelector('.name').textContent = unlocked ? item.name : 'Unknown law';
-      card.querySelector('.lvl').textContent = unlocked ? `${level} / ${item.max}` : '';
-      card.querySelector('.desc').textContent = unlocked ? item.desc : (item.hint || '');
-      card.querySelector('.effect').textContent = unlocked && item.effect ? item.effect(level) : '';
-      card.querySelector('.cost').textContent = !unlocked ? '' : maxed ? 'max' : fmt(price);
+    fillLevel() {
+      const g = this.game, k = g.level.constants;
+      $('#level-name').textContent = `Level ${g.level.number}`;
+      $('#brief-level').textContent = g.level.number;
+      $('#brief-tip').textContent = g.level.tip || '';
+      $('#brief-goals').innerHTML = g.goals.map((goal) => `<li>${goal.text}</li>`).join('');
+      $('#brief-consts').innerHTML = CONSTANTS.map((c) => `<div>
+          <span class="sym">${c.sym}</span><span class="val">${c.fmt(k[c.key])}</span>
+          <span class="about">${c.name}<span>${c.eq}</span></span></div>`).join('')
+        + DERIVED.map((d) => `<div class="derived">
+          <span class="sym">${d.sym}</span><span class="val">${d.value(k)}</span>
+          <span class="about">${d.name}</span></div>`).join('');
+      $('#const-list').innerHTML = `<dl class="kv">${CONSTANTS.map((c) =>
+        `<dt>${c.sym}</dt><dd title="${c.name}">${c.fmt(k[c.key])}</dd>`).join('')}
+        <div class="sep"></div>
+        <dt class="derived">M<sub>J</sub></dt><dd class="derived" title="Jeans mass">${Math.round(k.MJ)} M</dd></dl>`;
+      $('#goal-list').innerHTML = g.goals.map((goal, i) => `<li class="goal" data-i="${i}">
+          <div class="top"><span>${goal.text}</span><span class="val"></span></div>
+          <div class="bar"><i></i></div></li>`).join('');
+      this.update();
+    }
+
+    brief(paused) {
+      $('#brief-eyebrow').textContent = paused ? 'Paused · Level' : 'Level';
+      $('#brief-go').textContent = paused ? 'Resume' : 'Launch';
+      const dlg = $('#briefing');
+      if (!dlg.open) dlg.showModal();
+      dlg.scrollTop = 0;
+      $('#brief-go').focus({ preventScroll: true });
     }
 
     update() {
-      const g = this.game, s = g.state, m = g.metrics;
-      $('#order').textContent = fmt(s.order);
-      $('#rate').textContent = `+${(g.orderRate() * this.timeScale * s.speed).toFixed(1)} / s`;
-      $('#cosmos-name').textContent = `Cosmos ${roman(s.cosmos)}`;
-      $('#speed').textContent = `${s.speed}×`;
-      if (m) {
-        $('#structure').textContent = MOTE.classify(m);
-        document.querySelectorAll('.meter').forEach((el) => {
-          el.querySelector('i').style.width = `${Math.round(m[el.dataset.key] * 100)}%`;
-        });
-        const dust = g.sim.n - m.bodies - m.stars - m.holes;
-        $('#census').innerHTML = `${dust} dust · ${m.bodies} bodies<br>${m.stars} stars · ${m.holes} holes`;
-      }
-      for (const law of MOTE.LAWS) {
-        const card = document.querySelector(`#law-list [data-id="${law.id}"]`);
-        this.fillCard(card, law, g.level(law.id), g.lawCost(law), s.order, !!s.unlocked[law.id]);
-      }
-      const next = g.nextMilestone();
-      $('#goal').innerHTML = next ? `Next: <strong>${next.name}</strong> · ${next.hint}` : 'Every milestone reached. Crystallize, and find a new shape.';
-      const cr = $('#crystallize');
-      cr.disabled = !g.canCrystallize();
-      cr.textContent = g.canCrystallize() ? `Crystallize +${fmt(g.stardustGain())}` : `Crystallize · ${fmt(s.cosmosOrder)}/200`;
+      const g = this.game, sim = g.sim;
+      if (!sim) return;
+      const bh = sim.bh, k = sim.k;
+      $('#mass').textContent = Math.round(bh.m);
+      $('.mass').classList.toggle('danger', bh.m < k.M0 * 0.6 && bh.net < 0);
+      const net = $('#net');
+      net.textContent = `${bh.net >= 0 ? '+' : '−'}${Math.abs(bh.net).toFixed(1)} M/s${bh.net < 0 ? ' · evaporating' : ''}`;
+      net.className = bh.net >= 0.05 ? 'gain' : bh.net < 0 ? 'loss' : '';
+      $('#horizon').innerHTML = `r<sub>s</sub> ${sim.horizon().toFixed(1)}`;
+      const edd = $('#edd');
+      edd.innerHTML = `L/L<sub>Edd</sub> ${bh.eddington.toFixed(2)}`;
+      edd.classList.toggle('hot', bh.eddington > 1);
+      if (g.metrics) $('#structure').textContent = MOTE.classify(sim, g.metrics);
+      g.goals.forEach((goal, i) => {
+        const el = document.querySelector(`#goal-list [data-i="${i}"]`);
+        if (!el) return;
+        el.classList.toggle('done', goal.done);
+        const value = goal.type === 'mass' ? Math.round(goal.value) : goal.value;
+        let text = `${value} / ${goal.target}`;
+        let frac = Math.min(1, goal.value / goal.target);
+        if (goal.hold && goal.held > 0 && !goal.done) {
+          text += ` · ${Math.floor(goal.held)}/${goal.hold}s`;
+          frac = goal.held / goal.hold;
+        }
+        if (goal.done) { text = 'done'; frac = 1; }
+        el.querySelector('.val').textContent = text;
+        el.querySelector('i').style.width = `${Math.round(frac * 100)}%`;
+      });
     }
 
-    updateArchive() {
-      const g = this.game;
-      $('#stardust').textContent = fmt(g.state.stardust);
-      for (const c of MOTE.CONSTANTS) {
-        const card = document.querySelector(`#constant-list [data-id="${c.id}"]`);
-        this.fillCard(card, c, g.constant(c.id), g.constantCost(c), g.state.stardust, true);
+    showComplete() {
+      const g = this.game, sim = g.sim;
+      const img = this.renderer.snapshot(sim);
+      const name = MOTE.classify(sim, g.metrics);
+      $('#result-img').src = img;
+      $('#result-title').textContent = `Level ${g.level.number} complete`;
+      $('#result-text').textContent = `You shaped a ${name.toLowerCase()} in ${Math.round(sim.time)}s, at ${Math.round(sim.bh.m)} M, with ${sim.stats.starsFormed} star${sim.stats.starsFormed === 1 ? '' : 's'} ignited along the way. It's in your archive.`;
+      this.actions([['Next level', 'primary', () => { g.advance(img); this.onSetup(false); }]]);
+      $('#result').showModal();
+    }
+
+    showFailed() {
+      $('#result-img').src = '';
+      $('#result-title').textContent = 'Evaporated';
+      $('#result-text').innerHTML = 'Hawking radiation took the last of you: dM/dt = −ħc⁴ / 15360πG²M². The smaller a black hole is, the faster it radiates, so feed early and keep feeding until you are out of danger.';
+      this.actions([
+        ['New constants', '', () => this.onSetup(true)],
+        ['Try again', 'primary', () => this.onSetup(false)],
+      ]);
+      $('#result').showModal();
+    }
+
+    actions(list) {
+      const row = $('#result-actions');
+      row.innerHTML = '';
+      for (const [label, cls, fn] of list) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        if (cls) b.className = cls;
+        b.addEventListener('click', () => { $('#result').close(); fn(); });
+        row.appendChild(b);
       }
     }
 
-    renderGallery() {
-      const gallery = this.game.state.gallery;
+    renderArchive() {
+      const s = this.game.save;
+      $('#best').textContent = `reached level ${s.best}`;
       const el = $('#gallery');
-      if (!gallery.length) {
-        el.innerHTML = '<p class="empty">Nothing yet. Bring a cosmos to order, then crystallize it.</p>';
+      if (!s.archive.length) {
+        el.innerHTML = '<p class="empty">Nothing yet. Finish a level and the structure you built is kept here.</p>';
         return;
       }
       el.innerHTML = '';
-      for (const g of gallery) {
+      for (const p of s.archive) {
         const fig = document.createElement('figure');
         fig.className = 'plate';
         const img = document.createElement('img');
-        img.src = g.img; img.alt = g.name;
+        img.src = p.img; img.alt = p.name;
         const cap = document.createElement('figcaption');
-        cap.textContent = g.name;
+        cap.textContent = `Level ${p.level} · ${p.name}`;
         const meta = document.createElement('span');
-        meta.textContent = `Cosmos ${roman(g.cosmos)} · order ${g.order}% · ${g.stars}★`;
+        const c = p.constants;
+        meta.textContent = `${p.mass} M · ${p.stars}★ · ${p.time}s\nG ${c.G.toFixed(1)} · c ${c.c.toFixed(0)} · T ${Math.round(c.T * MOTE.KELVIN)} K · η ${Math.round(c.eta * 100)}%`;
+        meta.style.whiteSpace = 'pre-line';
         cap.appendChild(meta);
         fig.append(img, cap);
         el.appendChild(fig);
@@ -196,5 +232,4 @@
   }
 
   MOTE.UI = UI;
-  MOTE.fmt = fmt;
 })(window.MOTE);

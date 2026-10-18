@@ -1,61 +1,70 @@
 # mote
 
-An incremental game about creating order from chaos.
+You are a black hole, born small, in a sealed box of dust.
 
-Each cosmos begins as a cloud of a couple of thousand dust motes drifting at random. You can't place anything. You can only choose the **laws of physics** the motes obey, and watch what structure emerges from them: clumps, star clusters, supernova shells, black holes, galaxies. When you like what has formed, **crystallize** it into your archive and begin again from fresh chaos.
+Fly through the gas and feed: every mote that crosses your event horizon makes you heavier, your horizon wider and your gravity stronger. Each level is a fresh universe with its own randomly drawn physical constants, plugged into real equations. Learn what they do, then use your gravity to bend the dust into structure: disks, star-forming clumps, stars held in orbit around you.
 
 ## Play
 
-Open `index.html` in a browser. No build step and no dependencies; progress saves to `localStorage`.
+Open `index.html` in a browser. No build step and no dependencies; your level and archive save to `localStorage`.
 
-- **Laws** (left panel) cost *Order*. Each one is a dial on the physics, not a result.
-- **Hold on the sky** to gather nearby dust with your hand. Right-click, Shift, or the *Scatter* toggle pushes it away.
-- **Crystallize** freezes the cosmos into the archive and pays *Stardust*, which buys permanent **Constants**.
-- Scroll to zoom. The speed button runs the simulation at 1×, 2× or 4×.
+- **Steer:** hold the mouse or a finger where you want to go, or use WASD / arrow keys. Space brakes.
+- **Pause:** P or Esc. The briefing card shows the level's constants and goals.
+- **Archive:** every finished level keeps a snapshot of what you built, with the constants it was built under.
 
-## How order is measured
+## The physics
 
-Order is earned continuously from three measurements of the simulation (`src/order.js`):
+Every level draws new values for the constants below. Gameplay-relevant quantities (your starting horizon, the Jeans mass, how long until you evaporate) are drawn first, and the constant behind each one is then solved from its equation, so the numbers on the briefing card are consistent with the formulas.
 
-| Measure | Meaning |
-| --- | --- |
-| Concentration | How far the mass distribution's entropy has fallen from the starting cloud |
-| Coherence | How much of the angular momentum turns the same way (`|ΣL| / Σ|L|`) |
-| Richness | How many distinct objects survive; a cosmos swallowed by one body scores low |
-
-`order = (concentration + coherence) / 2 × richness²`, so a lone dead blob scores worse than a spinning disk of stars.
-
-## The laws
-
-| Law | What it does | Unlocks |
+| Constant | Equation it feeds | What you feel |
 | --- | --- | --- |
-| Gravity | Strength of N-body attraction | from the start |
-| Cohesion | Motes stick at higher relative speeds | 40 Order |
-| Dissipation | Damps radial motion so orbits circularise | a body of mass 15 |
-| Ignition | Clumps over a mass threshold fragment into star clusters | a body of mass 40 |
-| Radiance | Starlight pushes dust away | first star |
-| Mortality | Heavy stars die as supernovae, returning dust | 20 stars |
-| Collapse | The heaviest stars leave black holes behind | Mortality |
-| Vortex | Drives matter toward one shared rotation | second cosmos |
-| Dark Halo | An unseen potential that flattens orbits | third cosmos |
+| G | F = G·m₁m₂ / r² | How hard everything pulls, including you |
+| c | r_s = 2GM / c² | Size of your event horizon (and the light of accretion) |
+| T | M_J ∝ (T / G)^3/2 | Hotter gas resists collapsing into stars; also sets thermal motion |
+| γ | dv/dt = −γv | Gas drag: settles motion, helps clumps form |
+| e | v′ = −e·v | Restitution of collisions too fast to stick |
+| η | L = η·Ṁc² | Fraction of what you eat that shines instead of adding mass |
+| κ | L_Edd = 4πGMc / κ | Past the Eddington limit, your own light blows your food away |
+| ħ | dM/dt = −ħc⁴ / 15360πG²M² | Hawking evaporation: small holes shrink fast |
+| τ | t = τ·(M / 100)^−2.5 | Stellar lifetimes, ending in supernovae |
+
+Also at work, with no tunable constant: the fluid Roche limit `d = 2.44·R·(M/m)^1/3`, inside which tides tear clumps and stars apart; Jeans collapse, where a clump heavier than M_J ignites as a star; and the photon sphere at 1.5 r_s, drawn as the bright ring around you.
+
+The box is sealed: walls reflect matter with restitution, so nothing escapes. One game simplification: c sets your horizon, accretion luminosity and Hawking rate, but isn't enforced as a speed limit.
+
+## Goals
+
+The first five levels each teach one idea (feeding, disks, star formation, the Eddington limit, tides). After that, levels draw two or three goals at random, with targets that grow over fifteen levels:
+
+- grow to a mass
+- hold gas in near-circular orbit around you (tangential speed within 40% of √(GM/r))
+- ignite stars
+- keep stars orbiting you
+- tear clumps or stars apart with tides
+
+Evaporate below a quarter of your starting mass and the level is lost; retry it with the same constants, or roll new ones.
 
 ## Code
 
 Plain scripts sharing a `window.MOTE` namespace, loaded in order by `index.html`:
 
-- `src/sim.js`: physics: Barnes–Hut gravity, collisions and merging on a spatial grid, ignition, supernovae, the laws. Runs in Node too.
-- `src/order.js`: measurements of order and naming the structure.
-- `src/game.js`: laws, milestones, the Order/Stardust economy, saving.
+- `src/sim.js`: the physics. Barnes–Hut gravity for the dust, direct sums for the black hole, stick-or-bounce collisions on a grid, accretion, tides, Hawking radiation, Jeans collapse, supernovae, walls. Runs in Node too.
+- `src/level.js`: drawing constants and goals for a level.
+- `src/measure.js`: what orbits you, and naming the structure.
+- `src/game.js`: goals, winning and evaporating, the archive, saving.
 - `src/render.js`: canvas drawing.
-- `src/ui.js`: panels, dialogs, toasts.
-- `src/main.js`: the loop and input.
+- `src/ui.js`: HUD, briefing, results, archive.
+- `src/main.js`: the loop and controls.
 
 The simulation runs headless for balancing:
 
 ```js
-require('./src/sim.js'); require('./src/order.js');
-const sim = new MOTE.Sim(2000, 42);
-sim.laws.G = 6; sim.laws.starMass = 60;
-for (let i = 0; i < 3000; i++) sim.step(1 / 30);
-console.log(MOTE.classify(MOTE.measure(sim)));
+require('./src/sim.js'); require('./src/level.js'); require('./src/measure.js');
+const level = MOTE.generateLevel(3, 42, 1.6);
+const sim = new MOTE.Sim(level);
+sim.control = { vx: 30, vy: 0 };            // steer right
+for (let i = 0; i < 60 * 30; i++) sim.step(1 / 60);
+console.log(sim.bh.m, MOTE.classify(sim, MOTE.measure(sim)));
 ```
+
+The first version of mote, an incremental game about choosing the laws of a cosmos, is in the git history.

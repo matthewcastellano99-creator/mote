@@ -4,90 +4,97 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mote</title>
-  <meta name="description" content="Grow a speck of dust into a galaxy by choosing the laws of physics.">
+  <meta name="description" content="You are a black hole in a sealed box of dust. Feed, grow, and build structure under a new set of physical constants each level.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <canvas id="sky" aria-label="The simulated cosmos"></canvas>
+  <canvas id="sky" aria-label="The arena"></canvas>
 
   <header id="hud">
     <div class="brand">mote</div>
-    <div class="cosmos"><span id="cosmos-name">Cosmos I</span> · <span id="structure">Diffuse Nebula</span></div>
-    <div class="order"><span id="order">0</span> <small>order</small></div>
-    <div id="rate" class="mono">+0.0 / s</div>
+    <div class="where"><span id="level-name">Level 1</span> · <span id="structure">Dust Cloud</span></div>
+    <div class="mass"><span id="mass">60</span> <small>M</small></div>
+    <div class="readouts mono">
+      <span id="net">+0.0 M/s</span>
+      <span id="horizon">r<sub>s</sub> 3.0</span>
+      <span id="edd">L/L<sub>Edd</sub> 0.00</span>
+    </div>
   </header>
 
-  <aside id="meters" aria-label="Measures of order">
-    <div class="meter" data-key="concentration"><label>Concentration</label><div class="bar"><i></i></div></div>
-    <div class="meter" data-key="coherence"><label>Coherence</label><div class="bar"><i></i></div></div>
-    <div class="meter" data-key="richness"><label>Richness</label><div class="bar"><i></i></div></div>
-    <div class="meter total" data-key="order"><label>Order</label><div class="bar"><i></i></div></div>
-    <div class="census mono" id="census"></div>
+  <aside id="consts" aria-label="This level's constants">
+    <h2>Constants</h2>
+    <div id="const-list"></div>
   </aside>
 
-  <aside id="laws" aria-label="Laws of physics">
-    <h2>Laws <span class="sub">shape the physics, not the result</span></h2>
-    <div id="law-list"></div>
-  </aside>
-
-  <div id="goal"></div>
+  <section id="goals" aria-label="Goals">
+    <ol id="goal-list"></ol>
+  </section>
 
   <nav id="actions">
-    <button id="laws-toggle" class="mobile-only">Laws</button>
-    <button id="hand-mode" title="Hold on the sky to use your hand. Right-click or Shift scatters.">Gather</button>
-    <button id="speed" title="Simulation speed">1×</button>
+    <button id="consts-toggle" class="mobile-only">Constants</button>
+    <button id="pause">Pause</button>
     <button id="archive-btn">Archive</button>
-    <button id="crystallize" class="primary" disabled>Crystallize</button>
   </nav>
 
   <div id="toasts" aria-live="polite"></div>
 
+  <dialog id="briefing">
+    <div class="brief-head">
+      <span class="eyebrow" id="brief-eyebrow">Level</span>
+      <h2 id="brief-level">1</h2>
+    </div>
+    <p id="brief-tip" class="tip"></p>
+    <h3>Goals</h3>
+    <ol id="brief-goals" class="brief-goals"></ol>
+    <h3>Constants of this universe</h3>
+    <div id="brief-consts" class="const-table"></div>
+    <p class="controls">Steer: hold the mouse or a finger where you want to go, or use WASD / arrow keys. Space brakes. P or Esc pauses.</p>
+    <div class="row">
+      <button id="brief-new">New constants</button>
+      <button id="brief-restart">Restart</button>
+      <button id="brief-go" class="primary" autofocus>Launch</button>
+    </div>
+  </dialog>
+
+  <dialog id="result">
+    <img id="result-img" alt="">
+    <h2 id="result-title"></h2>
+    <p id="result-text"></p>
+    <div class="row" id="result-actions"></div>
+  </dialog>
+
   <dialog id="archive">
     <div class="archive-head">
       <h2>Archive</h2>
-      <div class="stardust"><span id="stardust">0</span> <small>stardust</small></div>
-      <button class="close" data-close>Close</button>
+      <span class="best mono" id="best"></span>
+      <button data-close>Close</button>
     </div>
-    <section>
-      <h3>Constants <span class="sub">permanent, across every cosmos</span></h3>
-      <div id="constant-list"></div>
-    </section>
-    <section>
-      <h3>Crystallized cosmoses</h3>
-      <div id="gallery"><p class="empty">Nothing yet. Bring a cosmos to order, then crystallize it.</p></div>
-    </section>
+    <div id="gallery"></div>
     <footer><button id="reset" class="danger">Erase all progress</button></footer>
-  </dialog>
-
-  <dialog id="confirm-crystal">
-    <h2>Crystallize this cosmos?</h2>
-    <p>It will be frozen into your archive as <strong id="cc-name"></strong>, and a new cloud of chaos begins. Your laws return to their first state.</p>
-    <p class="gain">+<span id="cc-gain">0</span> stardust</p>
-    <div class="row"><button data-close>Not yet</button><button id="cc-go" class="primary">Crystallize</button></div>
   </dialog>
 
   <dialog id="confirm-reset">
     <h2>Erase all progress?</h2>
-    <p>Every cosmos, constant and crystal in your archive will be gone. This cannot be undone.</p>
+    <p>Your level and every structure in the archive will be gone. This cannot be undone.</p>
     <div class="row"><button data-close>Keep it</button><button id="reset-go" class="danger">Erase everything</button></div>
   </dialog>
 
   <div id="intro">
     <div class="intro-card">
       <h1>mote</h1>
-      <p>Two thousand specks of dust, drifting at random.</p>
-      <p>You can't move them into place. You can only choose the <em>laws</em> they obey: gravity, cohesion, fire, death.</p>
-      <p>Order is earned when matter gathers and turns together. Bring this chaos to order, then crystallize it, and begin again.</p>
-      <p class="hint">Hold on the sky to gather nearby dust. Right-click or Shift to scatter.</p>
+      <p>You are a black hole, born small, in a sealed box of dust.</p>
+      <p>Small black holes are hot. Hawking radiation is already evaporating you. <em>Feed</em>, and you grow, and your gravity reaches further.</p>
+      <p>Every level is a universe with its own constants: gravity, the speed of light, temperature, Planck's constant. The equations stay real. Learn what they do, then bend the dust into structure.</p>
       <button id="begin" class="primary">Begin</button>
     </div>
   </div>
 
   <script src="src/sim.js"></script>
-  <script src="src/order.js"></script>
+  <script src="src/level.js"></script>
+  <script src="src/measure.js"></script>
   <script src="src/game.js"></script>
   <script src="src/render.js"></script>
   <script src="src/ui.js"></script>
