@@ -46,8 +46,16 @@ button.primary { border-color: rgba(127, 227, 255, 0.5); color: var(--order); fo
 button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
 
 /* HUD */
+/* Fixed chrome keeps clear of notches and system bars. */
+:root {
+  --top: calc(16px + env(safe-area-inset-top, 0px));
+  --bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  --left: max(16px, env(safe-area-inset-left, 0px));
+  --right: max(16px, env(safe-area-inset-right, 0px));
+}
+
 #hud {
-  position: fixed; top: 16px; left: 16px; pointer-events: none;
+  position: fixed; top: var(--top); left: var(--left); pointer-events: none;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
 }
 .brand { font-size: 13px; letter-spacing: 0.5em; text-transform: lowercase; color: var(--muted); }
@@ -59,7 +67,7 @@ button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
 
 /* Meters */
 #meters {
-  position: fixed; top: 16px; right: 16px; width: 200px;
+  position: fixed; top: var(--top); right: var(--right); width: 200px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 12px 14px; backdrop-filter: blur(6px);
 }
@@ -78,7 +86,7 @@ button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
 
 /* Laws */
 #laws {
-  position: fixed; left: 16px; top: 150px; bottom: 80px; width: 270px;
+  position: fixed; left: var(--left); top: calc(var(--top) + 134px); bottom: calc(var(--bottom) + 64px); width: 270px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 12px; overflow-y: auto; backdrop-filter: blur(6px);
 }
@@ -108,14 +116,14 @@ button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
 
 /* Goal + actions */
 #goal {
-  position: fixed; left: 50%; bottom: 76px; transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: calc(var(--bottom) + 60px); transform: translateX(-50%);
   font-size: 13px; color: var(--muted); text-align: center; pointer-events: none;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9); white-space: nowrap;
 }
 #goal strong { color: var(--text); font-weight: 400; }
 
 #actions {
-  position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px;
+  position: fixed; right: var(--right); bottom: var(--bottom); display: flex; gap: 8px;
 }
 #actions button { background: var(--panel); backdrop-filter: blur(6px); }
 #actions #hand-mode.scatter { color: var(--danger); border-color: rgba(255, 138, 168, 0.4); }
@@ -123,7 +131,7 @@ button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
 
 /* Toasts */
 #toasts {
-  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  position: fixed; top: var(--top); left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none;
 }
 .toast {
@@ -161,9 +169,9 @@ dialog p { font-size: 14px; line-height: 1.6; color: var(--muted); }
 .plate figcaption span { display: block; color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
 .empty { grid-column: 1 / -1; }
 dialog footer { margin-top: 22px; text-align: right; }
-#confirm-crystal { max-width: 420px; }
+#confirm-crystal, #confirm-reset { max-width: 420px; }
 #confirm-crystal .gain { font-size: 22px; color: var(--gold); margin: 6px 0 16px; }
-#confirm-crystal .row { display: flex; gap: 8px; justify-content: flex-end; }
+dialog .row { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* Intro */
 #intro {
@@ -180,19 +188,19 @@ dialog footer { margin-top: 22px; text-align: right; }
 
 /* Phones: laws become a drawer above the action bar. */
 @media (max-width: 720px) {
-  #hud { top: 12px; left: 16px; }
+  #hud { top: calc(var(--top) - 4px); }
   .order { font-size: 26px; }
-  #meters { top: 12px; right: 16px; width: 150px; padding: 10px; }
+  #meters { top: calc(var(--top) - 4px); width: 150px; padding: 10px; }
   .meter { margin-bottom: 6px; }
   .census { display: none; }
   #laws {
-    top: auto; left: 16px; right: 16px; bottom: 68px; width: auto; max-height: 48vh;
+    top: auto; left: var(--left); right: var(--right); bottom: calc(var(--bottom) + 52px); width: auto; max-height: 48vh;
     display: none;
   }
   #laws.open { display: block; }
-  #goal { bottom: 64px; font-size: 12px; white-space: normal; width: calc(100% - 32px); }
+  #goal { bottom: calc(var(--bottom) + 48px); font-size: 12px; white-space: normal; width: calc(100% - 32px); }
   body.laws-open #goal { display: none; }
-  #actions { left: 16px; right: 16px; justify-content: space-between; gap: 6px; }
+  #actions { left: var(--left); right: var(--right); justify-content: space-between; gap: 6px; }
   #actions button { padding: 8px 10px; font-size: 13px; flex: 1; }
   .mobile-only { display: inline-block; }
 }

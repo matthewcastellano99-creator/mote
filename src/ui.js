@@ -89,9 +89,10 @@
         const open = $('#laws').classList.toggle('open');
         document.body.classList.toggle('laws-open', open);
       });
-      $('#reset').addEventListener('click', () => {
-        if (!window.confirm('Erase every cosmos, constant and crystal? This cannot be undone.')) return;
+      $('#reset').addEventListener('click', () => $('#confirm-reset').showModal());
+      $('#reset-go').addEventListener('click', () => {
         this.game.reset();
+        $('#confirm-reset').close();
         archive.close();
         this.renderGallery();
         this.update();
