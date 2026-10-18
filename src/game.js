@@ -15,7 +15,7 @@
   function newSeed() { return (Math.random() * 2 ** 31) >>> 0; }
 
   function freshSave() {
-    return { level: 1, best: 1, seed: newSeed(), archive: [], seenIntro: false };
+    return { level: 1, best: 1, seed: newSeed(), archive: [], seenIntro: false, timeScale: 1 };
   }
 
   class Game {

@@ -2,8 +2,8 @@
 (function (MOTE) {
   'use strict';
 
-  const SIM_DT = 1 / 60;   // physics step, in sim-seconds
-  const MAX_STEPS = 3;     // per frame, so a slow device slows down instead of stalling
+  const SIM_DT = 1 / 60;   // longest physics step, in sim-seconds
+  const MAX_STEPS = 12;    // per frame, so a slow device slows down instead of stalling
   const VMAX = 60;         // top steering speed
 
   const canvas = document.getElementById('sky');
@@ -12,13 +12,16 @@
   const ui = new MOTE.UI(game, renderer);
   MOTE.game = game; MOTE.renderer = renderer; // handy from the console
 
-  // Leave room for the HUD bands around the arena.
+  // Fit the arena between the HUD above and the goals below; on wide screens the
+  // constants, time and buttons get a column of their own on the right.
   function fitInsets() {
     const phone = window.innerWidth < 720;
-    renderer.insets = phone
-      ? { top: 112, right: 12, bottom: 150, left: 12 }
-      : { top: 108, right: 240, bottom: 120, left: 24 };
+    const top = Math.ceil(document.getElementById('hud').getBoundingClientRect().bottom) + 10;
+    const bottom = Math.ceil(window.innerHeight - document.getElementById('goals').getBoundingClientRect().top) + 10;
+    renderer.insets = phone ? { top, right: 12, bottom, left: 12 } : { top, right: 240, bottom, left: 24 };
   }
+  ui.onLayout = fitInsets;
+  if (document.fonts) document.fonts.ready.then(fitInsets); // the HUD grows once its fonts arrive
   renderer.aspect = () => {
     const i = renderer.insets;
     return (renderer.w - i.left - i.right) / Math.max(1, renderer.h - i.top - i.bottom);
@@ -44,8 +47,12 @@
   };
   window.addEventListener('keydown', (e) => {
     if (document.querySelector('dialog[open]')) return;
-    if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); }
+    if (e.code === 'BracketLeft') ui.nudgeTime(-1);
+    if (e.code === 'BracketRight') ui.nudgeTime(1);
     if (e.code === 'KeyP' || e.code === 'Escape') game.pause();
+    // While the time slider has keyboard focus, the arrow keys belong to it.
+    if (e.target.id === 'time-scale' && e.code.startsWith('Arrow')) return;
+    if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); }
   });
   window.addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
   window.addEventListener('blur', () => keys.clear());
@@ -85,7 +92,7 @@
     if (game.sim) renderer.draw(game.sim, 0, null);
   });
 
-  let last = performance.now(), simAcc = 0, tickAcc = 0, uiAcc = 0;
+  let last = performance.now(), tickAcc = 0, tickReal = 0, uiAcc = 0, pace = 1;
   function frame(now) {
     const real = Math.min(0.1, (now - last) / 1000);
     last = now;
@@ -93,19 +100,26 @@
     if (sim && game.status === 'playing') {
       const { control, aim } = steer(sim);
       sim.control = control;
-      simAcc += real;
-      let steps = 0;
-      while (simAcc >= SIM_DT && steps < MAX_STEPS) {
-        sim.step(SIM_DT);
-        simAcc -= SIM_DT; tickAcc += SIM_DT; steps++;
+      // Fast-forward takes more full-size steps per frame; slow motion takes one
+      // smaller step every frame, so it stays smooth (and only gets more accurate).
+      const want = real * game.save.timeScale;
+      let advanced = 0;
+      if (want > 0) {
+        const n = Math.max(1, Math.min(MAX_STEPS, Math.ceil(want / SIM_DT - 1e-9)));
+        const dt = Math.min(SIM_DT, want / n);
+        for (let k = 0; k < n; k++) sim.step(dt);
+        advanced = n * dt;
       }
-      if (steps === MAX_STEPS) simAcc = 0;
+      if (real > 0) pace += (advanced / real - pace) * Math.min(1, real * 2);
+      tickAcc += advanced; tickReal += real;
       for (const ev of sim.events) { renderer.flash(ev); ui.simEvent(ev); }
       sim.events.length = 0;
-      if (tickAcc >= 0.25) { game.tick(tickAcc); tickAcc = 0; }
-      renderer.draw(sim, real, aim);
+      // Goals update every quarter second of sim time, and at least every quarter
+      // second of real time so the HUD stays live in deep slow motion.
+      if (tickAcc > 0 && (tickAcc >= 0.25 || tickReal >= 0.25)) { game.tick(tickAcc); tickAcc = 0; tickReal = 0; }
+      renderer.draw(sim, advanced, aim); // flashes run on sim time too
       uiAcc += real;
-      if (uiAcc > 0.15) { ui.update(); uiAcc = 0; }
+      if (uiAcc > 0.15) { ui.update(); ui.showPace(pace); uiAcc = 0; }
     } else if (sim && game.status === 'briefing') {
       renderer.draw(sim, 0, null); // the untouched box behind the briefing card
     }

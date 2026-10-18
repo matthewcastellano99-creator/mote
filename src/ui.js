@@ -30,12 +30,26 @@
     { sym: 'd<sub>R</sub>', name: 'Roche limit: tides tear apart what comes closer', value: () => '2.44·R·(M/m)<sup>1/3</sup>' },
   ];
 
+  // Time runs from 0.1× to 5× on a logarithmic slider, with a detent at 1×.
+  const TIME_MIN = 0.1, TIME_MAX = 5, TIME_RES = 1000;
+  const TIME_STOPS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5]; // for [ and ]
+  const TIME_SPAN = Math.log(TIME_MAX / TIME_MIN);
+  const timeToPos = (v) => Math.round(Math.log(v / TIME_MIN) / TIME_SPAN * TIME_RES);
+  function posToTime(p) {
+    const v = TIME_MIN * Math.exp(p / TIME_RES * TIME_SPAN);
+    if (Math.abs(Math.log(v)) < 0.07) return 1;
+    return v < 1 ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10;
+  }
+  const fmtTime = (v) => `${v < 1 ? v.toFixed(2) : v.toFixed(1)}×`;
+
   class UI {
     constructor(game, renderer) {
       this.game = game;
       this.renderer = renderer;
       this.lastToast = {};
+      this.onLayout = () => {};
       this.bind();
+      this.setTimeScale(game.save.timeScale || 1, false);
       game.on((type, data) => this.onEvent(type, data));
     }
 
@@ -56,9 +70,19 @@
       });
       $('#archive').addEventListener('close', () => { if (this.game.status === 'paused') this.brief(true); });
       $('#consts-toggle').addEventListener('click', () => $('#consts').classList.toggle('open'));
+      const slider = $('#time-scale');
+      slider.addEventListener('input', () => this.setTimeScale(posToTime(+slider.value), false));
+      slider.addEventListener('change', () => {
+        slider.value = timeToPos(this.game.save.timeScale); // settle onto the detent
+        this.game.persist();
+      });
+      // Let go of the slider and the arrow keys go back to steering.
+      slider.addEventListener('pointerup', () => slider.blur());
+      $('#time-reset').addEventListener('click', () => this.setTimeScale(1, true));
       $('#reset').addEventListener('click', () => $('#confirm-reset').showModal());
       $('#reset-go').addEventListener('click', () => {
         this.game.reset();
+        this.setTimeScale(1, false);
         $('#confirm-reset').close();
         $('#archive').close();
         this.onSetup(false);
@@ -68,7 +92,35 @@
     // Main asks the UI to (re)build a level; the arena takes the screen's shape.
     onSetup(reroll) {
       this.game.setup(this.renderer.aspect(), reroll);
+      this.onLayout();
       this.renderer.clear();
+    }
+
+    setTimeScale(v, persist) {
+      v = Math.min(TIME_MAX, Math.max(TIME_MIN, v));
+      this.game.save.timeScale = v;
+      const slider = $('#time-scale'), label = $('#time-reset');
+      if (posToTime(+slider.value) !== v) slider.value = timeToPos(v);
+      label.textContent = fmtTime(v);
+      label.classList.toggle('slow', v < 1);
+      label.classList.toggle('fast', v > 1);
+      slider.setAttribute('aria-valuetext', `${fmtTime(v).slice(0, -1)} times normal speed`);
+      if (persist) this.game.persist();
+    }
+
+    // [ and ] step through the stops on either side of the current speed.
+    nudgeTime(dir) {
+      const v = this.game.save.timeScale;
+      const next = dir > 0 ? TIME_STOPS.find((s) => s > v + 1e-6) : [...TIME_STOPS].reverse().find((s) => s < v - 1e-6);
+      if (next !== undefined) this.setTimeScale(next, true);
+    }
+
+    // Say so when a device can't keep up with fast-forward.
+    showPace(pace) {
+      const el = $('#time-pace'), want = this.game.save.timeScale;
+      const lagging = want > 1 && pace < want * 0.85;
+      el.hidden = !lagging;
+      if (lagging) el.textContent = `This device is keeping up at ${pace.toFixed(1)}×`;
     }
 
     launch() {

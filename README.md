@@ -9,6 +9,7 @@ Fly through the gas and feed: every mote that crosses your event horizon makes y
 Open `index.html` in a browser. No build step and no dependencies; your level and archive save to `localStorage`.
 
 - **Steer:** hold the mouse or a finger where you want to go, or use WASD / arrow keys. Space brakes.
+- **Time:** the Time slider runs the simulation from 0.1× (slow motion, for threading a Roche limit) to 5× (fast-forward through a collapse). `[` and `]` step through speeds, and the readout resets to 1×. Fast-forward takes more physics steps per frame; slow motion takes smaller ones, so both stay accurate. If a device can't keep up, the control shows the speed it is actually reaching.
 - **Pause:** P or Esc. The briefing card shows the level's constants and goals.
 - **Archive:** every finished level keeps a snapshot of what you built, with the constants it was built under.
 

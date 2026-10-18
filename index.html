@@ -33,6 +33,13 @@
     <ol id="goal-list"></ol>
   </section>
 
+  <div id="time" role="group" aria-label="Time speed">
+    <label for="time-scale">Time</label>
+    <input id="time-scale" type="range" min="0" max="1000" step="1" value="589">
+    <button id="time-reset" title="Back to normal speed. [ and ] also change it.">1.0×</button>
+    <span id="time-pace" class="mono" hidden></span>
+  </div>
+
   <nav id="actions">
     <button id="consts-toggle" class="mobile-only">Constants</button>
     <button id="pause">Pause</button>
@@ -51,7 +58,7 @@
     <ol id="brief-goals" class="brief-goals"></ol>
     <h3>Constants of this universe</h3>
     <div id="brief-consts" class="const-table"></div>
-    <p class="controls">Steer: hold the mouse or a finger where you want to go, or use WASD / arrow keys. Space brakes. P or Esc pauses.</p>
+    <p class="controls">Steer: hold the mouse or a finger where you want to go, or use WASD / arrow keys. Space brakes. P or Esc pauses. The Time slider, or [ and ], slows time down to 0.1× or speeds it up to 5×.</p>
     <div class="row">
       <button id="brief-new">New constants</button>
       <button id="brief-restart">Restart</button>
