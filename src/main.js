@@ -3,7 +3,7 @@
   'use strict';
 
   const SIM_DT = 1 / 60;   // longest physics step, in sim-seconds
-  const MAX_STEPS = 12;    // per frame, so a slow device slows down instead of stalling
+  const MAX_STEPS = 12;    // per frame at 5×; 3 at 1×, so a slow device slows down instead of stalling
   const VMAX = 60;         // top steering speed
 
   const canvas = document.getElementById('sky');
@@ -21,6 +21,7 @@
     renderer.insets = phone ? { top, right: 12, bottom, left: 12 } : { top, right: 240, bottom, left: 24 };
   }
   ui.onLayout = fitInsets;
+  ui.onTimeChange = (v) => { pace = v; };
   if (document.fonts) document.fonts.ready.then(fitInsets); // the HUD grows once its fonts arrive
   renderer.aspect = () => {
     const i = renderer.insets;
@@ -92,9 +93,10 @@
     if (game.sim) renderer.draw(game.sim, 0, null);
   });
 
-  let last = performance.now(), tickAcc = 0, tickReal = 0, uiAcc = 0, pace = 1;
+  let last = performance.now(), tickAcc = 0, tickReal = 0, uiAcc = 0, pace = game.save.timeScale || 1;
   function frame(now) {
-    const real = Math.min(0.1, (now - last) / 1000);
+    const wall = (now - last) / 1000;
+    const real = Math.min(0.1, wall); // a long stall shouldn't become one giant leap
     last = now;
     const sim = game.sim;
     if (sim && game.status === 'playing') {
@@ -105,12 +107,14 @@
       const want = real * game.save.timeScale;
       let advanced = 0;
       if (want > 0) {
-        const n = Math.max(1, Math.min(MAX_STEPS, Math.ceil(want / SIM_DT - 1e-9)));
+        const budget = Math.min(MAX_STEPS, Math.ceil(3 * Math.max(1, game.save.timeScale)));
+        const n = Math.max(1, Math.min(budget, Math.ceil(want / SIM_DT - 1e-9)));
         const dt = Math.min(SIM_DT, want / n);
         for (let k = 0; k < n; k++) sim.step(dt);
         advanced = n * dt;
       }
-      if (real > 0) pace += (advanced / real - pace) * Math.min(1, real * 2);
+      // Pace is judged against the true wall clock, so a struggling device is told the truth.
+      if (wall > 0) pace += (advanced / wall - pace) * Math.min(1, wall * 2);
       tickAcc += advanced; tickReal += real;
       for (const ev of sim.events) { renderer.flash(ev); ui.simEvent(ev); }
       sim.events.length = 0;
@@ -119,7 +123,7 @@
       if (tickAcc > 0 && (tickAcc >= 0.25 || tickReal >= 0.25)) { game.tick(tickAcc); tickAcc = 0; tickReal = 0; }
       renderer.draw(sim, advanced, aim); // flashes run on sim time too
       uiAcc += real;
-      if (uiAcc > 0.15) { ui.update(); ui.showPace(pace); uiAcc = 0; }
+      if (uiAcc > 0.15) { ui.update(); ui.showPace(pace, uiAcc); uiAcc = 0; }
     } else if (sim && game.status === 'briefing') {
       renderer.draw(sim, 0, null); // the untouched box behind the briefing card
     }

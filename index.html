@@ -34,8 +34,8 @@
   </section>
 
   <div id="time" role="group" aria-label="Time speed">
-    <label for="time-scale">Time</label>
-    <input id="time-scale" type="range" min="0" max="1000" step="1" value="589">
+    <span id="time-label">Time</span>
+    <input id="time-scale" type="range" min="0" max="1000" step="1" value="589" aria-labelledby="time-label">
     <button id="time-reset" title="Back to normal speed. [ and ] also change it.">1.0×</button>
     <span id="time-pace" class="mono" hidden></span>
   </div>

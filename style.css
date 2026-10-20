@@ -82,9 +82,10 @@ button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
 .kv .sep { grid-column: 1 / -1; height: 1px; background: var(--line); margin: 5px 0; }
 
 /* Goals */
+/* Centred under the arena, clear of the right-hand column of controls. */
 #goals {
-  position: fixed; left: 50%; bottom: var(--bottom); transform: translateX(-50%);
-  width: min(560px, calc(100% - 340px));
+  position: fixed; left: var(--left); right: calc(var(--right) + 232px); bottom: var(--bottom);
+  max-width: 560px; margin: 0 auto;
 }
 #goal-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .goal {
@@ -110,7 +111,7 @@ button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 6px 8px 6px 12px; backdrop-filter: blur(6px);
 }
-#time label { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); }
+#time-label { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
 #time-reset {
   font-family: var(--mono); font-size: 12px; padding: 4px 6px; min-width: 4.6em;
   font-variant-numeric: tabular-nums; text-align: center;
@@ -228,7 +229,7 @@ dialog footer { margin-top: 20px; text-align: right; }
   .readouts { gap: 10px; font-size: 10.5px; }
   #consts { display: none; top: calc(var(--top) + 96px); }
   #consts.open { display: block; }
-  #goals { left: var(--left); right: var(--right); bottom: calc(var(--bottom) + 92px); transform: none; width: auto; }
+  #goals { left: var(--left); right: var(--right); bottom: calc(var(--bottom) + 92px); max-width: none; }
   #time { left: var(--left); right: var(--right); width: auto; bottom: calc(var(--bottom) + 46px); }
   .goal { padding: 5px 9px; }
   .goal .top { font-size: 12px; }

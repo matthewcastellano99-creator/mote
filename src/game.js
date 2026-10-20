@@ -13,6 +13,7 @@
   };
 
   function newSeed() { return (Math.random() * 2 ** 31) >>> 0; }
+  MOTE.goalText = (g) => GOAL_TEXT[g.type](g);
 
   function freshSave() {
     return { level: 1, best: 1, seed: newSeed(), archive: [], seenIntro: false, timeScale: 1 };
@@ -39,6 +40,8 @@
       this.persist();
       this.emit('setup', this.level);
     }
+
+    reroll() { this.save.seed = newSeed(); }
 
     play() { if (this.status === 'briefing' || this.status === 'paused') this.status = 'playing'; }
     pause() { if (this.status === 'playing') { this.status = 'paused'; this.emit('paused'); } }

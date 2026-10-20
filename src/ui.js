@@ -48,6 +48,7 @@
       this.renderer = renderer;
       this.lastToast = {};
       this.onLayout = () => {};
+      this.onTimeChange = () => {};
       this.bind();
       this.setTimeScale(game.save.timeScale || 1, false);
       game.on((type, data) => this.onEvent(type, data));
@@ -72,12 +73,22 @@
       $('#consts-toggle').addEventListener('click', () => $('#consts').classList.toggle('open'));
       const slider = $('#time-scale');
       slider.addEventListener('input', () => this.setTimeScale(posToTime(+slider.value), false));
-      slider.addEventListener('change', () => {
-        slider.value = timeToPos(this.game.save.timeScale); // settle onto the detent
-        this.game.persist();
+      slider.addEventListener('change', () => this.game.persist());
+      // Let go of a drag: settle onto the detent, and give the arrow keys back to steering.
+      slider.addEventListener('pointerup', () => {
+        slider.value = timeToPos(this.game.save.timeScale);
+        slider.blur();
       });
-      // Let go of the slider and the arrow keys go back to steering.
-      slider.addEventListener('pointerup', () => slider.blur());
+      // From the keyboard, the slider steps through the same stops as [ and ]; a raw
+      // step of the log scale is too small to leave the 1× detent.
+      slider.addEventListener('keydown', (e) => {
+        const dir = { ArrowRight: 1, ArrowUp: 1, PageUp: 1, ArrowLeft: -1, ArrowDown: -1, PageDown: -1 }[e.key];
+        if (dir) this.nudgeTime(dir);
+        else if (e.key === 'Home') this.setTimeScale(TIME_MIN, true);
+        else if (e.key === 'End') this.setTimeScale(TIME_MAX, true);
+        else return;
+        e.preventDefault();
+      });
       $('#time-reset').addEventListener('click', () => this.setTimeScale(1, true));
       $('#reset').addEventListener('click', () => $('#confirm-reset').showModal());
       $('#reset-go').addEventListener('click', () => {
@@ -91,12 +102,25 @@
 
     // Main asks the UI to (re)build a level; the arena takes the screen's shape.
     onSetup(reroll) {
-      this.game.setup(this.renderer.aspect(), reroll);
+      const g = this.game;
+      if (reroll) g.reroll();
+      // Lay out this level's goal cards first, so the box is shaped for the space it gets.
+      const draft = MOTE.generateLevel(g.save.level, g.save.seed, this.renderer.aspect());
+      this.goalCards(draft.goals.map((goal) => ({ text: MOTE.goalText(goal) })));
       this.onLayout();
+      g.setup(this.renderer.aspect(), false);
       this.renderer.clear();
     }
 
+    goalCards(goals) {
+      $('#goal-list').innerHTML = goals.map((goal, i) => `<li class="goal" data-i="${i}">
+          <div class="top"><span>${goal.text}</span><span class="val"></span></div>
+          <div class="bar"><i></i></div></li>`).join('');
+    }
+
     setTimeScale(v, persist) {
+      v = Number(v);
+      if (!Number.isFinite(v) || v <= 0) v = 1; // a missing or corrupt saved value
       v = Math.min(TIME_MAX, Math.max(TIME_MIN, v));
       this.game.save.timeScale = v;
       const slider = $('#time-scale'), label = $('#time-reset');
@@ -105,6 +129,8 @@
       label.classList.toggle('slow', v < 1);
       label.classList.toggle('fast', v > 1);
       slider.setAttribute('aria-valuetext', `${fmtTime(v).slice(0, -1)} times normal speed`);
+      this.lagFor = 0;
+      this.onTimeChange(v);
       if (persist) this.game.persist();
     }
 
@@ -115,12 +141,16 @@
       if (next !== undefined) this.setTimeScale(next, true);
     }
 
-    // Say so when a device can't keep up with fast-forward.
-    showPace(pace) {
-      const el = $('#time-pace'), want = this.game.save.timeScale;
-      const lagging = want > 1 && pace < want * 0.85;
-      el.hidden = !lagging;
-      if (lagging) el.textContent = `This device is keeping up at ${pace.toFixed(1)}×`;
+    // Say so when a device can't keep up with fast-forward, once it has fallen
+    // behind for a whole second (not while it is still spinning up).
+    showPace(pace, dt) {
+      const want = this.game.save.timeScale;
+      this.lagFor = want > 1 && pace < want * 0.85 ? (this.lagFor || 0) + dt : 0;
+      const lagging = this.lagFor >= 1;
+      const phone = window.matchMedia('(max-width: 720px)').matches;
+      $('#time-pace').hidden = !lagging || phone;
+      $('#time-pace').textContent = lagging ? `This device is keeping up at ${pace.toFixed(1)}×` : '';
+      $('#time-label').textContent = lagging && phone ? `Time ${pace.toFixed(1)}×` : 'Time';
     }
 
     launch() {
@@ -176,9 +206,7 @@
         `<dt>${c.sym}</dt><dd title="${c.name}">${c.fmt(k[c.key])}</dd>`).join('')}
         <div class="sep"></div>
         <dt class="derived">M<sub>J</sub></dt><dd class="derived" title="Jeans mass">${Math.round(k.MJ)} M</dd></dl>`;
-      $('#goal-list').innerHTML = g.goals.map((goal, i) => `<li class="goal" data-i="${i}">
-          <div class="top"><span>${goal.text}</span><span class="val"></span></div>
-          <div class="bar"><i></i></div></li>`).join('');
+      this.goalCards(g.goals);
       this.update();
     }
 
