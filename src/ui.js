@@ -19,7 +19,9 @@
     { key: 'eta', sym: 'η', name: 'Radiative efficiency', eq: 'L = η·Ṁc²', fmt: (v) => `${Math.round(v * 100)}%` },
     { key: 'opacity', sym: 'κ', name: 'Opacity', eq: 'L<sub>Edd</sub> = 4πGMc / κ', fmt: (v) => v.toFixed(2) },
     { key: 'hbar', sym: 'ħ', name: 'Planck constant', eq: 'dM/dt = −ħc⁴ / 15360πG²M²', fmt: sci },
-    { key: 'tau', sym: 'τ', name: 'Stellar lifetime at 100 M', eq: 't = τ·(M / 100)<sup>−2.5</sup>', fmt: (v) => `${Math.round(v)} s` },
+    { key: 'tau', sym: 'τ', name: 'Stellar lifetime', eq: 't = τ·(M / 1.75)<sup>−2.5</sup>', fmt: (v) => `${Math.round(v)} s` },
+    { key: 'vHalo', sym: 'v<sub>h</sub>', name: 'Dark-halo circular speed', eq: 'v<sub>h</sub> ∝ M<sup>1/4</sup> (the M–σ relation)', fmt: (v) => v.toFixed(1) },
+    { key: 'arms', sym: 'm', name: 'Arms the disk favours', eq: 'm ∝ M<sub>halo</sub> / M<sub>disk</sub> (swing amplification)', fmt: (v) => String(v) },
   ];
 
   // What those constants add up to, for this level.
@@ -27,6 +29,8 @@
     { sym: 'r<sub>s</sub>', name: 'Your starting event horizon', value: (k) => (2 * k.G * k.M0 / (k.c * k.c)).toFixed(1) },
     { sym: 'M<sub>J</sub>', name: 'Jeans mass: heavier clumps collapse into stars', value: (k) => `${Math.round(k.MJ)} M` },
     { sym: 't<sub>ev</sub>', name: 'Time until you evaporate if you never eat', value: (k) => `${Math.round(k.tEvap)} s` },
+    { sym: 'M<sub>halo</sub>', name: 'Your mass when the dark halo gathers and the galaxy begins', value: (k) => `${Math.round(2.5 * k.M0)}–${Math.round(Math.min(3.2 * k.M0, k.Mcap))} M` },
+    { sym: 'M<sub>max</sub>', name: 'Your largest mass: past it, what falls in is blown back out', value: (k) => `${Math.round(k.Mcap)} M` },
     { sym: 'd<sub>R</sub>', name: 'Roche limit: tides tear apart what comes closer', value: () => '2.44·R·(M/m)<sup>1/3</sup>' },
   ];
 
@@ -47,6 +51,7 @@
       this.game = game;
       this.renderer = renderer;
       this.lastToast = {};
+      this.toastCount = {};
       this.onLayout = () => {};
       this.onTimeChange = () => {};
       this.bind();
@@ -63,7 +68,8 @@
       $('#brief-go').addEventListener('click', () => this.launch());
       $('#brief-restart').addEventListener('click', () => this.onSetup(false));
       $('#brief-new').addEventListener('click', () => this.onSetup(true));
-      $('#pause').addEventListener('click', () => this.game.pause());
+      // While admiring a finished galaxy, the Pause button becomes Next level.
+      $('#pause').addEventListener('click', () => (this.game.status === 'admiring' ? this.nextLevel() : this.game.pause()));
       $('#archive-btn').addEventListener('click', () => {
         this.game.pause();
         this.renderArchive();
@@ -159,23 +165,40 @@
     }
 
     onEvent(type, data) {
-      if (type === 'setup') { this.fillLevel(); this.brief(false); }
+      if (type === 'setup') {
+        this.toastCount = {};
+        $('#pause').textContent = 'Pause';
+        $('#pause').classList.remove('primary');
+        this.fillLevel();
+        this.brief(false);
+      }
+      if (type === 'admiring') {
+        $('#pause').textContent = 'Next level';
+        $('#pause').classList.add('primary');
+        this.toast('Your galaxy keeps evolving. <b>Speed up time</b> to watch it wind up.', 'good');
+      }
+      if (type === 'halo') this.toast('<b>A dark halo gathers.</b> The gas begins to wheel around you.', 'good');
       if (type === 'paused') this.brief(true);
       if (type === 'goal') this.toast(`Goal complete: <b>${data.text}</b>`, 'good');
       if (type === 'complete') this.showComplete();
       if (type === 'failed') this.showFailed();
     }
 
-    // Sim events become toasts, at most one of each kind every couple of seconds.
+    // Sim events become toasts: the first few of each kind in a level (a galaxy lights
+    // hundreds of clusters), and never more than one of a kind every couple of seconds.
     simEvent(ev) {
+      const LIMIT = { ignite: 3, supernova: 2, shred: 4, swallow: 3, wind: 1 };
+      const seen = (this.toastCount[ev.type] || 0);
       const now = performance.now();
-      if (now - (this.lastToast[ev.type] || 0) < 2500) return;
+      if (seen >= (LIMIT[ev.type] || 0) || now - (this.lastToast[ev.type] || 0) < 2500) return;
+      this.toastCount[ev.type] = seen + 1;
       this.lastToast[ev.type] = now;
       const text = {
-        ignite: ['A clump passed the Jeans mass. <b>A star ignites.</b>', ''],
-        supernova: ['<b>Supernova.</b> A star returns its gas to the box.', ''],
+        ignite: ['A clump passed the Jeans mass. <b>A star cluster ignites.</b>', ''],
+        supernova: ['<b>Supernova.</b> A massive star returns its gas.', ''],
         shred: [ev.star ? '<b>Tidal disruption.</b> You tore a star apart.' : 'Tides <b>shredded a clump.</b>', 'bad'],
         swallow: ['<b>Star swallowed</b> whole.', 'bad'],
+        wind: ['<b>You are full.</b> What falls in now is blown back out as a wind.', ''],
       }[ev.type];
       if (text) this.toast(text[0], text[1]);
     }
@@ -240,6 +263,17 @@
         const value = goal.type === 'mass' ? Math.round(goal.value) : goal.value;
         let text = `${value} / ${goal.target}`;
         let frac = Math.min(1, goal.value / goal.target);
+        if (goal.type === 'galaxy' && !goal.done) {
+          // Before the halo gathers there is nothing to measure: show the way there.
+          const wake = 2.5 * k.M0;
+          if (!g.metrics || g.metrics.halo < 0.5) {
+            text = `halo at ${Math.round(wake)} M · ${Math.round(bh.m)}`;
+            frac = Math.min(1, bh.m / wake) * 0.5;
+          } else {
+            text = `arms ${goal.value} / ${goal.target}`;
+            frac = 0.5 + 0.5 * Math.min(1, goal.value / goal.target);
+          }
+        }
         if (goal.hold && goal.held > 0 && !goal.done) {
           text += ` · ${Math.floor(goal.held)}/${goal.hold}s`;
           frac = goal.held / goal.hold;
@@ -250,14 +284,27 @@
       });
     }
 
+    // Keep the galaxy as it looks right now, and move on.
+    nextLevel() {
+      const g = this.game;
+      g.advance(this.renderer.snapshot(g.sim));
+      this.onSetup(false);
+    }
+
     showComplete() {
-      const g = this.game, sim = g.sim;
+      const g = this.game, sim = g.sim, fm = g.finalMetrics(), sp = fm.spiral;
       const img = this.renderer.snapshot(sim);
-      const name = MOTE.classify(sim, g.metrics);
+      const name = MOTE.classify(sim, fm);
       $('#result-img').src = img;
-      $('#result-title').textContent = `Level ${g.level.number} complete`;
-      $('#result-text').textContent = `You shaped a ${name.toLowerCase()} in ${Math.round(sim.time)}s, at ${Math.round(sim.bh.m)} M, with ${sim.stats.starsFormed} star${sim.stats.starsFormed === 1 ? '' : 's'} ignited along the way. It's in your archive.`;
-      this.actions([['Next level', 'primary', () => { g.advance(img); this.onSetup(false); }]]);
+      $('#result-title').textContent = `Level ${g.level.number}: ${name}`;
+      $('#result-text').textContent = sp.score > 0
+        ? `In ${Math.round(sim.time)} s you grew to ${Math.round(sim.bh.m)} M and built a galaxy around yourself: ${sp.m} arm${sp.m === 1 ? '' : 's'} winding out at a ${Math.round(sp.pitch)}° pitch, ${fm.stars.toLocaleString()} stars from ${sim.stats.starsFormed} clusters.`
+        : `You shaped a ${name.toLowerCase()} in ${Math.round(sim.time)} s, at ${Math.round(sim.bh.m)} M.`;
+      $('#result-text').textContent += ' Young galaxies keep winding up: keep watching, and the archive keeps it as it looks when you move on.';
+      this.actions([
+        ['Keep watching', '', () => g.admire()],
+        ['Next level', 'primary', () => this.nextLevel()],
+      ]);
       $('#result').showModal();
     }
 
@@ -289,7 +336,7 @@
       $('#best').textContent = `reached level ${s.best}`;
       const el = $('#gallery');
       if (!s.archive.length) {
-        el.innerHTML = '<p class="empty">Nothing yet. Finish a level and the structure you built is kept here.</p>';
+        el.innerHTML = '<p class="empty">Nothing yet. Finish a level and the galaxy you built is kept here.</p>';
         return;
       }
       el.innerHTML = '';
@@ -302,7 +349,8 @@
         cap.textContent = `Level ${p.level} · ${p.name}`;
         const meta = document.createElement('span');
         const c = p.constants;
-        meta.textContent = `${p.mass} M · ${p.stars}★ · ${p.time}s\nG ${c.G.toFixed(1)} · c ${c.c.toFixed(0)} · T ${Math.round(c.T * MOTE.KELVIN)} K · η ${Math.round(c.eta * 100)}%`;
+        const arms = p.arms ? `${p.arms} arm${p.arms === 1 ? '' : 's'} · ${p.pitch}° pitch · ` : '';
+        meta.textContent = `${arms}${p.mass} M · ${p.stars.toLocaleString()}★ · ${p.time}s\nG ${c.G.toFixed(1)} · c ${c.c.toFixed(0)} · T ${Math.round(c.T * MOTE.KELVIN)} K · η ${Math.round(c.eta * 100)}%`;
         meta.style.whiteSpace = 'pre-line';
         cap.appendChild(meta);
         fig.append(img, cap);

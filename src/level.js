@@ -7,27 +7,32 @@
   const JEANS = 8000;     // M_J = JEANS · (T / G)^(3/2), in mote masses
   const KELVIN = 40;      // display scale for temperature: 5–35 K, like a molecular cloud
 
-  // The first levels teach one idea each; after that, goals are drawn at random.
+  // Every level ends the same way: a spiral galaxy around you, held for a while.
+  // Its target is the arm-strength score (measure.js) × 100: 15 is clearly visible.
+  const galaxy = (d) => ({ type: 'galaxy', target: 15 + Math.round(5 * d), hold: 10 + Math.round(5 * d) });
+
+  // The first levels teach one idea each on the way there; after that, goals are drawn
+  // at random.
   const TUTORIAL = [
     {
       goals: [{ type: 'mass', target: 200 }],
-      tip: 'Hawking radiation is evaporating you. Fly into the dust and feed before you vanish.',
+      tip: 'Hawking radiation is evaporating you: feed. At about three times your starting mass a dark halo gathers around you, the gas starts to wheel, and arms appear. Settle near the middle of the box so the galaxy has room, and fast-forward with the Time slider while it winds up.',
     },
     {
       goals: [{ type: 'disk', target: 100, hold: 6 }],
-      tip: 'Matter that falls in at an angle misses and orbits. Sweep through the gas so it wraps around you.',
+      tip: 'Matter that falls in at an angle misses and orbits. Sweep through the gas so it wraps around you: that disk is the galaxy to come.',
     },
     {
-      goals: [{ type: 'stars', target: 1 }],
-      tip: 'A clump heavier than the Jeans mass collapses into a star. Clumps glow brighter as they get close.',
+      goals: [{ type: 'stars', target: 3 }],
+      tip: 'A clump heavier than the Jeans mass collapses into a cluster of stars. In a galaxy the gas piles up in the arms, so that is where new, blue stars are born.',
     },
     {
-      goals: [{ type: 'stars', target: 3 }, { type: 'mass', target: 400 }],
-      tip: 'Feeding fast makes you shine, and that light blows away nearby gas. Pace yourself.',
+      goals: [{ type: 'mass', target: 300 }],
+      tip: 'Feeding fast makes you shine, and past the Eddington limit that light blows away nearby gas. Pace yourself.',
     },
     {
-      goals: [{ type: 'shred', target: 1 }, { type: 'orbitStars', target: 1, hold: 6 }],
-      tip: 'Inside the Roche limit (the dashed ring) tides tear stars apart. Shred one, then let another settle into orbit outside it.',
+      goals: [{ type: 'shred', target: 1 }],
+      tip: 'Inside the Roche limit (the dashed ring) tides tear clumps and stars apart. Shred one, but leave the rest to build your galaxy.',
     },
   ];
 
@@ -42,10 +47,9 @@
       () => ({ type: 'mass', target: Math.round(M0 * (4 + 8 * d + 2 * r()) / 10) * 10 }),
       () => ({ type: 'disk', target: Math.round((100 + 200 * d) / 10) * 10, hold: 8 + Math.round(6 * d) }),
       () => ({ type: 'stars', target: 2 + Math.round(2 * d + 3 * d * r()) }),
-      () => ({ type: 'orbitStars', target: 1 + Math.round(2 * d), hold: 6 + Math.round(4 * d) }),
       () => ({ type: 'shred', target: 1 + Math.round(2 * d) }),
     ];
-    const count = d > 0.6 ? 3 : 2;
+    const count = d > 0.6 ? 2 : 1;
     const picks = [];
     while (picks.length < count) {
       const k = Math.floor(r() * pool.length);
@@ -91,7 +95,7 @@
       ? { x: side * box.W * 0.4, y: along * box.H }
       : { x: along * box.W, y: side * box.H * 0.4 };
     const tutorial = TUTORIAL[number - 1];
-    const goals = tutorial ? tutorial.goals : randomGoals(r, d);
+    const goals = [...(tutorial ? tutorial.goals : randomGoals(r, d)), galaxy(d)];
     return {
       number, seed, ...box, start,
       count: Math.round(1700 + 500 * d + 200 * r()),

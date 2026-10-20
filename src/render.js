@@ -15,12 +15,16 @@
     'hsla(182, 90%, 76%, 0.95)',
   ];
 
-  function starColor(m) {
-    if (m < 70) return [255, 150, 100];
-    if (m < 120) return [255, 205, 140];
-    if (m < 200) return [255, 244, 228];
-    return [165, 200, 255];
-  }
+  // Cluster stars span ~0.6–10 mass units (a Salpeter IMF). Light ones burn red-gold all
+  // level long; the massive few burn blue and die within seconds, so blue marks where
+  // stars are being born: in the arms.
+  const STAR_TINTS = [
+    { below: 1, fill: 'rgba(255, 170, 120, 0.7)', dot: 1.1 },
+    { below: 2, fill: 'rgba(255, 214, 160, 0.85)', dot: 1.35 },
+    { below: 4, fill: 'rgba(255, 246, 232, 0.95)', dot: 1.6 },
+    { below: Infinity, fill: 'rgba(185, 212, 255, 1)', dot: 2 },
+  ];
+  const BLUE = [150, 190, 255];
 
   const spriteCache = new Map();
   function glowSprite(rgb) {
@@ -75,7 +79,7 @@
 
     flash(ev) {
       if (this.flashes.length > 40) return;
-      const size = { ignite: 22, supernova: 70, shred: 30, swallow: 26, evaporate: 90 }[ev.type] || 20;
+      const size = { ignite: 22, supernova: 40, shred: 30, swallow: 26, wind: 50, evaporate: 90 }[ev.type] || 20;
       this.flashes.push({ x: ev.x, y: ev.y, t: 0, life: ev.type === 'ignite' ? 1 : 1.8, size, type: ev.type });
     }
 
@@ -83,10 +87,14 @@
       const ctx = this.ctx, w = this.w, h = this.h;
       this.layout(sim);
       const s = this.s, ox = this.ox, oy = this.oy;
-      const bh = sim.bh, k = sim.k, GM = k.G * bh.m;
+      const bh = sim.bh, k = sim.k, GM = k.G * bh.m, gal = sim.gal;
+      const vh2 = gal ? gal.vh * gal.vh * gal.on : 0, rc2 = gal ? gal.rc * gal.rc : 1;
 
       ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = 'rgba(4, 5, 12, 0.3)';
+      // Trails cover the same stretch of sim time at any speed: short at 5×, long in
+      // slow motion. (About 0.3 per frame at 1× and 60 fps.)
+      const fade = dt > 0 ? Math.min(0.9, Math.max(0.12, 1 - Math.exp(-dt / 0.047))) : 0.3;
+      ctx.fillStyle = `rgba(4, 5, 12, ${fade})`;
       ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = 'lighter';
 
@@ -102,10 +110,11 @@
         const dvx = sim.vx[i] - bh.vx, dvy = sim.vy[i] - bh.vy;
         const r = Math.hypot(dx, dy) + 1e-6, v2 = dvx * dvx + dvy * dvy;
         let b = 0;
-        if (v2 / 2 < GM / Math.sqrt(r * r + 4)) {
-          // Brighter the closer it is to a circular orbit at √(GM/r).
+        const vc2 = GM / Math.sqrt(r * r + 4) + vh2 * r * r / (r * r + rc2);
+        if (v2 < 2 * vc2) {
+          // Brighter the closer it is to a circular orbit (the hole's pull plus the halo's).
           const vt = Math.abs(dx * dvy - dy * dvx) / r, vr = Math.abs(dx * dvx + dy * dvy) / r;
-          const vc = Math.sqrt(GM / r);
+          const vc = Math.sqrt(vc2);
           const off = Math.abs(vt - vc) / vc + vr / vc;
           b = off < 0.45 ? 4 : off < 0.8 ? 3 : off < 1.3 ? 2 : 1;
         }
@@ -128,14 +137,33 @@
       }
 
       const now = performance.now() / 1000;
+      // The galaxy's bulge: old stars and the halo's core, a soft glow once it gathers.
+      if (gal && gal.on > 0.05) {
+        const g = Math.max(20, gal.rc * s * 1.3), bx = ox + bh.x * s, by = oy + bh.y * s;
+        ctx.globalAlpha = 0.35 * gal.on;
+        ctx.drawImage(glowSprite([255, 214, 170]), bx - g, by - g, g * 2, g * 2);
+        ctx.globalAlpha = 1;
+      }
+
+      // Stars: one batch of dots per tint, with a small glow on the massive blue ones.
+      const starPaths = STAR_TINTS.map(() => new Path2D());
+      // Dots grow with the zoom, so a galaxy reads the same on a phone and a wide screen.
+      const sq = Math.max(0.8, 0.85 * s);
+      ctx.globalAlpha = 0.55;
       for (const i of stars) {
         const m = sim.m[i];
         const x = ox + sim.x[i] * s, y = oy + sim.y[i] * s;
-        const size = (14 + Math.sqrt(m) * 2.2) * Math.sqrt(s) * (1 + 0.06 * Math.sin(now * 3 + i));
-        ctx.drawImage(glowSprite(starColor(m)), x - size / 2, y - size / 2, size, size);
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(x, y, Math.max(1.4, sim.r[i] * s * 0.5), 0, Math.PI * 2); ctx.fill();
+        let t = 0;
+        while (m >= STAR_TINTS[t].below) t++;
+        const d = STAR_TINTS[t].dot * sq;
+        starPaths[t].rect(x - d / 2, y - d / 2, d, d);
+        if (m >= 3) {
+          const g = (5 + m * 1.4) * sq * (1 + 0.08 * Math.sin(now * 3 + i));
+          ctx.drawImage(glowSprite(BLUE), x - g / 2, y - g / 2, g, g);
+        }
       }
+      ctx.globalAlpha = 1;
+      starPaths.forEach((p, t) => { ctx.fillStyle = STAR_TINTS[t].fill; ctx.fill(p); });
 
       this.drawHole(sim, now);
 
@@ -144,7 +172,7 @@
         fl.t += dt;
         if (fl.t > fl.life) { this.flashes.splice(f, 1); continue; }
         const p = fl.t / fl.life;
-        const rgb = { ignite: '255, 220, 160', supernova: '180, 220, 255', shred: '255, 140, 170', swallow: '255, 180, 110', evaporate: '200, 230, 255' }[fl.type] || '255, 255, 255';
+        const rgb = { ignite: '255, 220, 160', supernova: '180, 220, 255', shred: '255, 140, 170', swallow: '255, 180, 110', wind: '190, 170, 255', evaporate: '200, 230, 255' }[fl.type] || '255, 255, 255';
         ctx.strokeStyle = `rgba(${rgb}, ${0.55 * (1 - p) * (1 - p)})`;
         ctx.lineWidth = 1.5 * (1 - p) + 0.5;
         ctx.beginPath();

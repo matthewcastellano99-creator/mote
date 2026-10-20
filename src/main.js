@@ -99,7 +99,7 @@
     const real = Math.min(0.1, wall); // a long stall shouldn't become one giant leap
     last = now;
     const sim = game.sim;
-    if (sim && game.status === 'playing') {
+    if (sim && game.running) {
       const { control, aim } = steer(sim);
       sim.control = control;
       // Fast-forward takes more full-size steps per frame; slow motion takes one
