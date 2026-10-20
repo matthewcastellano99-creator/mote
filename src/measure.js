@@ -5,68 +5,75 @@
 
   const { STAR, BODY } = MOTE.KIND;
 
-  // Spiral arms, about the hole:
-  //   1. Is it a rotating disk?  coherence = |ΣL| / Σ|L|
-  //   2. Does it have arms?      the m-fold Fourier amplitude (best m in 1..4) of matter in
-  //                              log-radius annuli, minus what random scatter would give
-  //   3. Are they spirals?       the arm phase must wind steadily with ln r, as a log
-  //                              spiral does, at a pitch between 8° and 50° (not a bar,
-  //                              ring or blob)
-  // score = strength × goodness of that fit; ≥ 0.12 is a spiral you can see, ≥ 0.3 a
-  // strong one. Annuli must fit inside the box, and the disk needs ≥ 600 points: a few
-  // dozen bright dots can line up by chance.
-  const NB = 7, MIN_POINTS = 600, MIN_BIN = 30;
+  // Spiral arms, measured the way astronomers measure them in galaxy images: a
+  // log-spiral Fourier transform (Kalnajs 1975; Considère & Athanassoula 1988),
+  //   A(m, p) = Σ w·exp(−i(m·θ + p·ln r)) / Σ w,   w = √mass,
+  // over matter around the hole. A logarithmic spiral with m arms at pitch i peaks at
+  // p = m / tan i. A bar or an oval peaks at p = 0, so a spiral must be clearly stronger
+  // at its own winding than unwound; the disk must rotate coherently, its pitch lie
+  // between 5° and 50°, and it needs ≥ 600 points. The score is the noise-corrected
+  // amplitude of the best (m, p), m = 2..8: ≥ 0.12 is a spiral you can see, ≥ 0.3 a
+  // strong one. Rings must fit inside the box, so walls can't fake arms.
+  const NR = 64, M_MAX = 8, P_MAX = 60, P_STEP = 0.5, NP = Math.round(2 * P_MAX / P_STEP) + 1;
+  const MIN_POINTS = 600;
+  const re = new Float64Array((M_MAX + 1) * NR), im = new Float64Array((M_MAX + 1) * NR);
+  const cosT = new Float64Array(NP * NR), sinT = new Float64Array(NP * NR);
   function spiral(sim) {
     const bh = sim.bh, rIn = 12;
     const wall = Math.min(sim.W / 2 - Math.abs(bh.x), sim.H / 2 - Math.abs(bh.y));
     const rOut = Math.min(Math.min(sim.W, sim.H) * 0.48, wall);
     const none = { score: 0, m: 0, pitch: 0, strength: 0, inDisk: 0 };
     if (rOut < rIn * 3) return none;
-    const lnIn = Math.log(rIn), lnOut = Math.log(rOut);
-    const bins = Array.from({ length: NB }, () => ({ w: 0, w2: 0, n: 0, re: [0, 0, 0, 0, 0], im: [0, 0, 0, 0, 0] }));
-    let lSum = 0, lAbs = 0, inDisk = 0;
+    const u0 = Math.log(rIn), du = (Math.log(rOut) - u0) / NR;
+    re.fill(0); im.fill(0);
+    let W = 0, W2 = 0, lSum = 0, lAbs = 0, inDisk = 0;
     for (let i = 0; i < sim.n; i++) {
       const dx = sim.x[i] - bh.x, dy = sim.y[i] - bh.y, r = Math.hypot(dx, dy);
       if (r < rIn || r > rOut) continue;
       const m = sim.m[i];
       const l = m * (dx * (sim.vy[i] - bh.vy) - dy * (sim.vx[i] - bh.vx));
       lSum += l; lAbs += Math.abs(l); inDisk++;
-      const B = bins[Math.min(NB - 1, Math.floor((Math.log(r) - lnIn) / (lnOut - lnIn) * NB))];
-      const th = Math.atan2(dy, dx), w = Math.sqrt(m); // √m: heavy clumps don't fake arms
-      B.w += w; B.w2 += w * w; B.n++;
-      for (let k = 1; k <= 4; k++) { B.re[k] += w * Math.cos(k * th); B.im[k] += w * Math.sin(k * th); }
+      const w = Math.sqrt(m); // √m: heavy clumps don't fake arms
+      W += w; W2 += w * w;
+      const k = Math.min(NR - 1, Math.floor((Math.log(r) - u0) / du));
+      const c1 = dx / r, s1 = dy / r;
+      let c = 1, s = 0; // e^{-imθ}, by repeated multiplication
+      for (let mm = 1; mm <= M_MAX; mm++) {
+        const cn = c * c1 + s * s1; s = s * c1 - c * s1; c = cn;
+        re[mm * NR + k] += w * c; im[mm * NR + k] += w * s;
+      }
     }
     const coherence = lAbs > 0 ? Math.abs(lSum) / lAbs : 0;
     if (coherence <= 0.6 || inDisk < MIN_POINTS) return { ...none, inDisk };
-    let best = { ...none, inDisk };
-    for (let k = 1; k <= 4; k++) {
-      const pts = [];
-      let sAmp = 0, sN = 0;
-      bins.forEach((B, b) => {
-        if (B.n < MIN_BIN) return;
-        const amp2 = (B.re[k] ** 2 + B.im[k] ** 2) / (B.w * B.w), noise2 = B.w2 / (B.w * B.w);
-        const amp = Math.sqrt(Math.max(0, amp2 - noise2));
-        pts.push({ lnr: lnIn + (b + 0.5) / NB * (lnOut - lnIn), phase: Math.atan2(B.im[k], B.re[k]) / k, amp, n: B.n });
-        sAmp += amp * B.n; sN += B.n;
-      });
-      if (pts.length < 4) continue;
-      const P = 2 * Math.PI / k; // unwrap the pattern angle outward
-      for (let j = 1; j < pts.length; j++) {
-        while (pts[j].phase - pts[j - 1].phase > P / 2) pts[j].phase -= P;
-        while (pts[j].phase - pts[j - 1].phase < -P / 2) pts[j].phase += P;
+    for (let j = 0; j < NP; j++) {
+      const p = -P_MAX + j * P_STEP;
+      for (let k = 0; k < NR; k++) { const ph = -p * (u0 + (k + 0.5) * du); cosT[j * NR + k] = Math.cos(ph); sinT[j * NR + k] = Math.sin(ph); }
+    }
+    const noise2 = W2 / (W * W), j0 = Math.round(P_MAX / P_STEP);
+    const amp2 = (mm, j) => {
+      let ar = 0, ai = 0;
+      const o = mm * NR, t = j * NR;
+      for (let k = 0; k < NR; k++) {
+        const r0 = re[o + k], i0 = im[o + k], cp = cosT[t + k], sp = sinT[t + k];
+        ar += r0 * cp - i0 * sp; ai += r0 * sp + i0 * cp;
       }
-      let W = 0, X = 0, Y = 0, XX = 0, XY = 0;
-      for (const p of pts) { const w = p.amp * p.n; W += w; X += w * p.lnr; Y += w * p.phase; XX += w * p.lnr * p.lnr; XY += w * p.lnr * p.phase; }
-      const den = W * XX - X * X;
-      if (W <= 0 || Math.abs(den) < 1e-9) continue;
-      const a = (W * XY - X * Y) / den, c = (Y - a * X) / W;
-      let res = 0;
-      for (const p of pts) { const e = p.phase - (a * p.lnr + c); res += p.amp * p.n * e * e; }
-      const fit = Math.max(0, 1 - Math.sqrt(res / W) / (P / 4));
-      const pitch = Math.atan(1 / Math.max(1e-6, Math.abs(a))) * 180 / Math.PI; // θ = a·ln r
-      const strength = sAmp / sN;
-      const score = pitch >= 8 && pitch <= 50 ? strength * fit : 0;
-      if (score > best.score) best = { score, m: k, pitch, strength, inDisk };
+      return (ar * ar + ai * ai) / (W * W);
+    };
+    let best = { ...none, inDisk };
+    // From two arms up: a one-armed (m = 1) pattern is a lopsided disk, which a young
+    // galaxy shows while it settles around a moving hole, not the spiral we're after.
+    for (let mm = 2; mm <= M_MAX; mm++) {
+      const bar2 = amp2(mm, j0);
+      for (let j = 0; j < NP; j++) {
+        const p = -P_MAX + j * P_STEP;
+        if (Math.abs(p) < 0.5) continue;
+        const a2 = amp2(mm, j);
+        if (a2 < 2 * bar2) continue;
+        const pitch = Math.atan(mm / Math.abs(p)) * 180 / Math.PI;
+        if (pitch < 5 || pitch > 50) continue;
+        const strength = Math.sqrt(Math.max(0, a2 - 6 * noise2));
+        if (strength > best.score) best = { score: strength, m: mm, pitch, strength, inDisk };
+      }
     }
     return best;
   }
@@ -108,15 +115,15 @@
   }
 
   // Hubble's spiral types follow how tightly the arms wind: Sb tight, Sc open, Sd loose.
-  function hubbleType(pitch) { return pitch < 26 ? 'Sb' : pitch < 36 ? 'Sc' : 'Sd'; }
+  function hubbleType(pitch) { return pitch < 13 ? 'Sa' : pitch < 20 ? 'Sb' : pitch < 28 ? 'Sc' : 'Sd'; }
+  const ARMS = ['', 'Lopsided', 'Two-Armed', 'Three-Armed', 'Four-Armed', 'Five-Armed', 'Six-Armed', 'Seven-Armed', 'Eight-Armed'];
 
   // Name the structure you built, for the archive.
   function classify(sim, m) {
     const s = m.spiral;
     if (s && s.score >= 0.12) {
-      const arms = s.score < 0.18 ? 'Flocculent Spiral'
-        : s.m === 2 ? (s.score >= 0.3 ? 'Grand-Design Spiral' : 'Two-Armed Spiral')
-          : s.m === 3 ? 'Three-Armed Spiral' : s.m === 4 ? 'Four-Armed Spiral' : 'Lopsided Spiral';
+      const arms = s.score < 0.16 ? 'Flocculent Spiral'
+        : s.m === 2 && s.score >= 0.3 ? 'Grand-Design Spiral' : `${ARMS[s.m]} Spiral`;
       return `${arms} (${hubbleType(s.pitch)})`;
     }
     if (m.halo > 0.5 && m.stars >= 100) return 'Young Disk Galaxy';

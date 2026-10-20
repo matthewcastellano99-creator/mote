@@ -15,9 +15,9 @@
     'hsla(182, 90%, 76%, 0.95)',
   ];
 
-  // Cluster stars span ~0.6–10 mass units (a Salpeter IMF). Light ones burn red-gold all
-  // level long; the massive few burn blue and die within seconds, so blue marks where
-  // stars are being born: in the arms.
+  // Cluster stars span ~0.6–10 motes' worth of mass (a Salpeter IMF). Light ones burn
+  // red-gold all level long; the massive few burn blue and die within seconds, so blue
+  // marks where stars are being born: in the arms.
   const STAR_TINTS = [
     { below: 1, fill: 'rgba(255, 170, 120, 0.7)', dot: 1.1 },
     { below: 2, fill: 'rgba(255, 214, 160, 0.85)', dot: 1.35 },
@@ -42,6 +42,81 @@
     g.fillRect(0, 0, size, size);
     spriteCache.set(key, c);
     return c;
+  }
+
+  // The galaxy's light: a map of how many motes and stars sit where, blurred over a few
+  // particle spacings and tone-mapped, so arms read as luminous bands the way they do in a
+  // telescope image rather than as a few more dots. Stars glow warm, gas glows blue. Each
+  // particle counts once whatever its mass, so a heavy clump doesn't outshine an arm.
+  const GLOW_CELL = 2.5, GLOW_R = 2; // world units per glow pixel; blur radius in pixels
+  class Glow {
+    constructor() {
+      this.canvas = document.createElement('canvas');
+      this.ctx = this.canvas.getContext('2d');
+      this.ref = 0;
+    }
+
+    update(sim) {
+      const gw = Math.max(8, Math.ceil(sim.W / GLOW_CELL)), gh = Math.max(8, Math.ceil(sim.H / GLOW_CELL)), N = gw * gh;
+      if (this.canvas.width !== gw || this.canvas.height !== gh) {
+        this.canvas.width = gw; this.canvas.height = gh;
+        this.img = this.ctx.createImageData(gw, gh);
+        this.star = new Float32Array(N); this.gas = new Float32Array(N); this.tmp = new Float32Array(N);
+      }
+      const star = this.star, gas = this.gas, hw = sim.W / 2, hh = sim.H / 2;
+      star.fill(0); gas.fill(0);
+      for (let i = 0; i < sim.n; i++) {
+        const cx = Math.floor((sim.x[i] + hw) / GLOW_CELL), cy = Math.floor((sim.y[i] + hh) / GLOW_CELL);
+        if (cx < 0 || cy < 0 || cx >= gw || cy >= gh) continue;
+        if (sim.kind[i] === STAR) star[cy * gw + cx]++; else gas[cy * gw + cx]++;
+      }
+      this.blur(star, gw, gh); this.blur(gas, gw, gh);
+      // Tone-map against a slowly tracked reference: the density the average particle sits
+      // in, so the empty outskirts don't drag it down. Arms land on the bright shoulder of
+      // the curve and the space between them on its dark toe.
+      let s1 = 0, s2 = 0;
+      for (let c = 0; c < N; c++) { const v = star[c] + gas[c]; s1 += v; s2 += v * v; }
+      const ref = s1 > 0 ? s2 / s1 : 1;
+      this.ref = this.ref ? this.ref + (ref - this.ref) * 0.1 : ref;
+      const d = this.img.data, inv = 1.3 / this.ref;
+      const tone = (v) => { const t = 1 - Math.exp(-Math.max(0, v) * inv); return t * t; };
+      for (let c = 0, p = 0; c < N; c++, p += 4) {
+        const a = tone(star[c]), b = tone(1.5 * gas[c]);
+        d[p] = 255 * Math.min(1, a + 0.4 * b);
+        d[p + 1] = 255 * Math.min(1, 0.88 * a + 0.62 * b);
+        d[p + 2] = 255 * Math.min(1, 0.74 * a + b);
+        d[p + 3] = 255;
+      }
+      this.ctx.putImageData(this.img, 0, 0);
+    }
+
+    // Three passes of a (2R+1)-wide running box along x then y: close to a Gaussian, with
+    // soft tails, at a cost that doesn't depend on R. (Running sums can leave tiny
+    // negative residues, which tone() clamps.)
+    blur(a, w, h) {
+      const t = this.tmp, R = GLOW_R, n = 2 * R + 1;
+      for (let pass = 0; pass < 3; pass++) {
+        for (let y = 0; y < h; y++) {
+          const o = y * w;
+          let acc = 0;
+          for (let x = 0; x < R; x++) acc += a[o + x];
+          for (let x = 0; x < w; x++) {
+            if (x + R < w) acc += a[o + x + R];
+            t[o + x] = acc / n;
+            if (x >= R) acc -= a[o + x - R];
+          }
+        }
+        for (let x = 0; x < w; x++) {
+          let acc = 0;
+          for (let y = 0; y < R; y++) acc += t[y * w + x];
+          for (let y = 0; y < h; y++) {
+            if (y + R < h) acc += t[(y + R) * w + x];
+            a[y * w + x] = acc / n;
+            if (y >= R) acc -= t[(y - R) * w + x];
+          }
+        }
+      }
+    }
   }
 
   class Renderer {
@@ -92,16 +167,28 @@
 
       ctx.globalCompositeOperation = 'source-over';
       // Trails cover the same stretch of sim time at any speed: short at 5×, long in
-      // slow motion. (About 0.3 per frame at 1× and 60 fps.)
-      const fade = dt > 0 ? Math.min(0.9, Math.max(0.12, 1 - Math.exp(-dt / 0.047))) : 0.3;
+      // slow motion (about 0.3 per frame at 1× and 60 fps). Once a galaxy has formed they
+      // shorten, so stars streaking along their orbits don't blur its arms.
+      const on = gal ? gal.on : 0, tau = 0.047 * (1 - 0.6 * on);
+      const fade = dt > 0 ? Math.min(0.9, Math.max(0.12, 1 - Math.exp(-dt / tau))) : 0.3;
       ctx.fillStyle = `rgba(4, 5, 12, ${fade})`;
       ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = 'lighter';
 
+      // The glow layer, refreshed every other frame. Drawn at the fade's own strength, so
+      // with the trail fade it settles to the same brightness at any time speed.
+      if (!this.glow) this.glow = new Glow();
+      if (dt > 0 && (this.glowTick = !this.glowTick)) this.glow.update(sim);
+      if (this.glow.img) {
+        ctx.globalAlpha = Math.min(1, (0.2 + 0.8 * on) * fade);
+        ctx.drawImage(this.glow.canvas, ox - sim.W / 2 * s, oy - sim.H / 2 * s, sim.W * s, sim.H * s);
+        ctx.globalAlpha = 1;
+      }
+
       // Dust, batched by its orbit around you.
       const paths = DUST_COLORS.map(() => new Path2D());
       const bodies = [], stars = [];
-      const dot = Math.max(1, 1.3 * Math.sqrt(s));
+      const dot = Math.max(1, 1.1 * Math.sqrt(s));
       for (let i = 0; i < sim.n; i++) {
         const kind = sim.kind[i];
         if (kind === STAR) { stars.push(i); continue; }
@@ -140,7 +227,7 @@
       // The galaxy's bulge: old stars and the halo's core, a soft glow once it gathers.
       if (gal && gal.on > 0.05) {
         const g = Math.max(20, gal.rc * s * 1.3), bx = ox + bh.x * s, by = oy + bh.y * s;
-        ctx.globalAlpha = 0.35 * gal.on;
+        ctx.globalAlpha = 0.2 * gal.on;
         ctx.drawImage(glowSprite([255, 214, 170]), bx - g, by - g, g * 2, g * 2);
         ctx.globalAlpha = 1;
       }
@@ -148,17 +235,17 @@
       // Stars: one batch of dots per tint, with a small glow on the massive blue ones.
       const starPaths = STAR_TINTS.map(() => new Path2D());
       // Dots grow with the zoom, so a galaxy reads the same on a phone and a wide screen.
-      const sq = Math.max(0.8, 0.85 * s);
+      const sq = Math.max(0.7, 0.7 * s), mote = k.mote || 1;
       ctx.globalAlpha = 0.55;
       for (const i of stars) {
         const m = sim.m[i];
         const x = ox + sim.x[i] * s, y = oy + sim.y[i] * s;
         let t = 0;
-        while (m >= STAR_TINTS[t].below) t++;
+        while (m / mote >= STAR_TINTS[t].below) t++;
         const d = STAR_TINTS[t].dot * sq;
         starPaths[t].rect(x - d / 2, y - d / 2, d, d);
-        if (m >= 3) {
-          const g = (5 + m * 1.4) * sq * (1 + 0.08 * Math.sin(now * 3 + i));
+        if (m / mote >= 3.5) {
+          const g = (5 + (m / mote) * 1.2) * sq * (1 + 0.08 * Math.sin(now * 3 + i));
           ctx.drawImage(glowSprite(BLUE), x - g / 2, y - g / 2, g, g);
         }
       }

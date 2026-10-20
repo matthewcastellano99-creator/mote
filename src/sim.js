@@ -98,7 +98,7 @@
           const f = e.s * Math.exp(-(dx * dx + dy * dy) / (2 * e.w * e.w));
           vx += -dy / e.w * f; vy += dx / e.w * f;
         }
-        const m = 0.6 + rand() * 0.8;
+        const m = (0.6 + rand() * 0.8) * (this.k.mote || 1);
         this.x[i] = x; this.y[i] = y; this.vx[i] = vx; this.vy[i] = vy;
         this.m[i] = m; this.kind[i] = DUST; this.r[i] = radiusFor(m, DUST); this.age[i] = 0;
       }
@@ -417,7 +417,7 @@
     shred(i, dx, dy) {
       const m = this.m[i], x = this.x[i], y = this.y[i], vx = this.vx[i], vy = this.vy[i];
       const d = Math.hypot(dx, dy) || 1, rx = dx / d, ry = dy / d;
-      const count = Math.max(2, Math.min(Math.round(m), this.cap - this.n + 1));
+      const count = Math.max(2, Math.min(Math.round(m / (this.k.mote || 1)), this.cap - this.n + 1));
       const span = this.r[i] * 3;
       this.events.push({ type: 'shred', x, y, m, star: this.kind[i] === STAR });
       this.stats.shredded++;
@@ -463,7 +463,8 @@
 
     supernova(i) {
       const m = this.m[i], x = this.x[i], y = this.y[i], vx = this.vx[i], vy = this.vy[i];
-      const count = Math.max(6, Math.min(Math.round(m), this.cap - this.n + 1, 160));
+      const mote = this.k.mote || 1;
+      const count = Math.max(6, Math.min(Math.round(m / mote), this.cap - this.n + 1, Math.round(160 / mote)));
       this.events.push({ type: 'supernova', x, y, m });
       this.stats.supernovae++;
       for (let k = 0; k < count; k++) {

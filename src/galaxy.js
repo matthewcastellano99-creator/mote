@@ -1,27 +1,30 @@
 // The galaxy layer: every level ends as a spiral galaxy centred on the player's hole,
-// built from ~1000 small stars plus gas, so the arms are traced by many points instead
-// of a few giant clumps, and with mass conserved. Loaded after sim.js and level.js, it
-// extends their Sim and generateLevel in place (it began as a drop-in experiment, which
-// is why it wraps rather than edits them).
+// built from thousands of small stars plus gas, so the arms are traced by many points
+// instead of a few giant clumps, and with mass conserved. Loaded after sim.js and
+// level.js, it extends their Sim and generateLevel in place (it began as a drop-in
+// experiment, which is why it wraps rather than edits them).
 //
 // Early play is sim.js as written: dust self-gravitates (Barnes–Hut), slow collisions stick
 // into clumps, the hole feeds (Eddington-limited light pushes gas), tides shred inside
 // the Roche limit, and a clump past the Jeans mass ignites. What this layer changes:
 //
 //  (1) Embedded clusters. An igniting clump fragments ENTIRELY into ~M/1.5 collisionless
-//      star particles (Salpeter IMF, 0.6..10, rescaled so mass and momentum are exactly
-//      the clump's), with a little velocity dispersion. In the galaxy the clump was a
-//      cloud complex sheared along its orbit, so the cluster is laid out as a short arc
-//      of that orbit. Lifetimes keep t = tau·(m/m_unit)^-2.5 with the mass unit retuned
-//      to cluster stars (m_unit = 1.75): massive members live seconds to tens of seconds
-//      and go supernova (the base supernova, returning gas), 1.5-mass stars outlive the
-//      level. Young massive stars therefore sit where clusters are born: in the arms.
+//      star particles (masses in motes; Salpeter IMF, 0.6..10, rescaled so mass and
+//      momentum are exactly the clump's), with a little velocity dispersion. In the
+//      galaxy the clump was a cloud complex sheared along its orbit, so the cluster is
+//      laid out as a short arc of that orbit. Lifetimes keep t = tau·(m/m_unit)^-2.5
+//      with the mass unit retuned to cluster stars (m_unit = 1.75 motes): massive
+//      members live seconds to tens of seconds and go supernova (the base supernova,
+//      returning gas), 1.5-mote stars outlive the level. Young massive stars therefore
+//      sit where clusters are born: in the arms.
 //  (2) The galaxy (density-wave mechanism of the earlier prototype, retuned). Once the
 //      hole has fed to 2.5–3.2 M0 a cored dark halo centred on it switches on (circular
 //      speed ∝ M^1/4 from M–σ, size ∝ M^1/2), gas settles toward circular orbits in the
 //      disk's spin sense, and a rigidly rotating logarithmic spiral potential (m arms and
-//      pitch from level constants and the hole's mass) organises gas and stars. The halo
-//      core is (1 − 1/m)·R_CR so the whole disk lies between the Lindblad resonances.
+//      pitch from level constants and the hole's mass) organises gas and stars: 3–6
+//      arms, wound tightly at 10–18° (the potential's pitch; the arms you see wind a
+//      little tighter still). The halo core is (1 − 1/m)·R_CR so the whole disk lies
+//      between the Lindblad resonances.
 //      Inside the disk the Jeans mass drops with surface density (M_J ∝ Σ^-1/2), so gas
 //      piled into the arms makes many modest clusters, not a few giants.
 //  (3) Mass is conserved. Nothing is deleted except what the hole eats. The hole stops
@@ -29,17 +32,23 @@
 //      box, and so the horizon stays ≲ 15); anything crossing the horizon beyond that is
 //      blown back out as gas (an accretion-disk wind), not radiated. sim.js's own
 //      leaks are closed too: arrays grow instead of overflowing on spawns.
-//  (4) Speed. Barnes–Hut is rebuilt as a bucketed quadtree walked once per leaf (far
+//  (4) Resolution. The box holds the same mass at any resolution (level.js), so with
+//      three motes per unit of mass every piece that splits off (cluster stars, supernova
+//      shells, tidal debris, the wind) comes in three times as many, lighter pieces:
+//      ~4500 points trace the arms.
+//  (5) Speed. Barnes–Hut is rebuilt as a bucketed quadtree walked once per leaf (far
 //      field as a local Taylor expansion), refreshed every 3 steps for gas and every 6
 //      for stars; the hole's pull stays exact every step.
 //
 // Departures from reality, on purpose: the dark halo and the spiral potential are
 // imposed, not self-consistent; gas AND stars feel a "settling" friction toward circular
 // orbits with their own angular momentum, balanced by Langevin thermostats that hold
-// Toomre Q (gas 1.5, stars 1.4) — a stand-in for dissipation, feedback and disk heating;
-// star particles are softened at 30 (they are a collisionless fluid, not stars), so
-// clusters dissolve instead of staying bound; the potential's pitch is opened by 16°
-// because the forced stellar response winds tighter than the potential.
+// Toomre Q ≈ 1.2 (cold, so the arms stay crisp) — a stand-in for dissipation, feedback and
+// disk heating; star particles are softened at 30 (they are a collisionless fluid, not
+// stars), so clusters dissolve instead of staying bound; stars beyond corotation are still
+// settled gently, so the disk keeps a clean edge instead of shedding them; and once the
+// galaxy has formed, an unsteered hole is held at rest by dynamical friction and drifts
+// slowly to the middle of the box, so the walls don't clip its galaxy.
 (function (MOTE) {
   'use strict';
 
@@ -49,6 +58,16 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
   const radiusFor = (m, kind) => (kind === STAR ? 1.1 : 0.9) * Math.cbrt(m);
+  // The galaxy's character, chosen by sweeping these against the spiral-arm score and how
+  // much of the disk stays put when the player sits still: 3–6 arms (from the halo-to-disk
+  // mass ratio), arms wound at 10–18°, strong arm forcing, a cold disk, gentle settling
+  // beyond corotation and the galaxy's edge, and a slow drift to the middle of the box.
+  const T = {
+    armDiv: 3, armMin: 3, armMax: 6, armLo: 0.26, armHi: 0.36,
+    pitchOpen: 0, pitchLo: 10, pitchHi: 18,
+    Qgas: 1.2, Qstar: 1.2, sigStar: 1.2, sigGasF: 0.8,
+    outerStar: 0.35, outerLen: 60, center: 0.03,
+  };
 
   // ================================================================ level constants
   const generate = MOTE.generateLevel;
@@ -59,9 +78,10 @@
     const r = MOTE.rng((seed * 7919 + number * 104729 + 17) >>> 0);
     const between = (a, b) => a + (b - a) * r();
     // Stars and clusters.
-    k.mStar = 1.5;                    // mean mass of a cluster star
-    k.imf = [0.6, 10, 2.35];          // Salpeter IMF: m_min, m_max, slope
-    k.mUnit = 1.75;                   // lifetime t = tau·(m/m_unit)^-2.5 for cluster stars
+    const mote = k.mote || 1;         // star particles scale with the motes they form from
+    k.mStar = 1.5 * mote;             // mean mass of a cluster star
+    k.imf = [0.6 * mote, 10 * mote, 2.35]; // Salpeter IMF: m_min, m_max, slope
+    k.mUnit = 1.75 * mote;            // lifetime t = tau·(m/m_unit)^-2.5 for cluster stars
     k.sigmaCl = between(2, 3.5);      // birth velocity dispersion of a cluster
     k.epsStar = 30;                   // softening seen by star particles (~ their spacing)
     k.arcLen = 3;                     // cluster birth arc half-length, in units of sqrt(M)
@@ -75,16 +95,17 @@
     // The hole stops growing at M_cap: no further than its horizon can reach into the
     // disk, and no further than radiating η of what it ate costs ~4.5% of the box.
     const rs0 = 2 * k.G * k.M0 / (k.c * k.c);
-    k.Mcap = clamp(Math.min(k.M0 * 15 / rs0, k.M0 + 0.045 * level.count * (1 - k.eta) / k.eta), 3.5 * k.M0, 6 * k.M0);
+    const boxMass = level.count * mote;
+    k.Mcap = clamp(Math.min(k.M0 * 15 / rs0, k.M0 + 0.045 * boxMass * (1 - k.eta) / k.eta), 3.5 * k.M0, 6 * k.M0);
     // Mass goals beyond M_cap would be unreachable: they now ask for most of M_cap.
     for (const goal of level.goals) if (goal.type === 'mass') goal.target = Math.min(goal.target, Math.floor(0.95 * k.Mcap / 10) * 10);
     // Galaxy.
     k.vHalo = between(22, 30);        // halo circular speed when the hole is 3·M0
     k.hDisk = 50;                     // disk scale length when the hole is 3·M0
-    k.armF = between(0.18, 0.28);     // spiral force / axisymmetric force
+    k.armF = between(T.armLo, T.armHi); // spiral force / axisymmetric force
     // Swing amplification sets the arm count: m grows with the halo-to-disk mass ratio.
-    const Mhalo = k.vHalo * k.vHalo * 3 * k.hDisk / k.G, Mdisk = 0.6 * level.count;
-    k.arms = clamp(Math.floor(Mhalo / (5 * Mdisk)), 2, 4);
+    const Mhalo = k.vHalo * k.vHalo * 3 * k.hDisk / k.G, Mdisk = 0.6 * boxMass;
+    k.arms = clamp(Math.round(Mhalo / (T.armDiv * Mdisk)), T.armMin, T.armMax);
     // Corotation near the disk's edge, and a halo core r_c = (1 − 1/m)·R_CR: inside it the
     // rotation is nearly solid-body at Ω_c = Ω_p/(1 − 1/m), so ν = m(Ω − Ω_p)/κ ≈ 1/2 and
     // the whole disk sits between the Lindblad resonances (|ν| < 1): the forced response
@@ -93,13 +114,13 @@
     k.pitchOff = between(-7, 7);      // pitch-angle offset from the disk's self-gravity (deg)
     k.cCore = 1 - 1 / k.arms;         // r_core / R_CR
     k.fCav = 1.2;                     // the hole's feedback keeps gas out of fCav·r_s + 2
-    k.sigmaGas = 1.2 * k.sigma;       // thermal floor on the random speed of disk gas
-    k.Qgas = 1.5;                     // Toomre Q that feedback-driven turbulence maintains
+    k.sigmaGas = T.sigGasF * k.sigma; // thermal floor on the random speed of disk gas
+    k.Qgas = T.Qgas;                  // Toomre Q that feedback-driven turbulence maintains
     k.nuDisk = 0.2;                   // gas settling rate once the disk has formed (1/s)
     k.nuStar = 0.1;                   // dynamical friction of stars against the disk (1/s)
     k.starJ = 1;                      // stars settle toward their birth angular momentum
-    k.Qstar = 1.4;                    // Toomre Q the stellar disk is held at
-    k.sigmaStar = 2;                  // floor on the stars' random speed
+    k.Qstar = T.Qstar;                // Toomre Q the stellar disk is held at
+    k.sigmaStar = T.sigStar;          // floor on the stars' random speed
     return level;
   };
 
@@ -146,9 +167,9 @@
     for (let j = from; j < sim.n; j++) { sim.gx[j] = sim.gx[i]; sim.gy[j] = sim.gy[i]; sim.rt[j] = sim.rt[i]; }
   }
   const shred = P.shred;
-  P.shred = function (i, dx, dy) { room(this, Math.round(this.m[i]) + 4); const n0 = this.n; shred.call(this, i, dx, dy); inherit(this, i, n0); };
+  P.shred = function (i, dx, dy) { room(this, Math.round(this.m[i] / (this.k.mote || 1)) + 4); const n0 = this.n; shred.call(this, i, dx, dy); inherit(this, i, n0); };
   const supernova = P.supernova;
-  P.supernova = function (i) { room(this, 170); const n0 = this.n; supernova.call(this, i); inherit(this, i, n0); };
+  P.supernova = function (i) { room(this, Math.round(170 / (this.k.mote || 1))); const n0 = this.n; supernova.call(this, i); inherit(this, i, n0); };
 
   // ================================================================ gravity
   // Barnes–Hut on a bucketed quadtree (leaves of <= k.leaf particles), built by in-place
@@ -402,7 +423,7 @@
     return gained - over;
   };
   function blowOut(sim, mass) {
-    const count = Math.max(1, Math.round(mass / 1.2)), mp = mass / count, bh = sim.bh, g = sim.gal;
+    const count = Math.max(1, Math.round(mass / (1.2 * (sim.k.mote || 1)))), mp = mass / count, bh = sim.bh, g = sim.gal;
     const rand = sim._rand || Math.random, rs = sim.horizon(), spin = g && g.spin ? g.spin : 1;
     room(sim, count);
     for (let c = 0; c < count; c++) {
@@ -432,11 +453,10 @@
     // Shear at corotation sets the pitch, tan i ≈ (2/7)·√(4 − 2Γ)/Γ with Γ = −dlnΩ/dlnr
     // (Michikoshi & Kokubo 2014); the disk's own weight opens or closes it by a few
     // degrees (pitchOff), and heavier holes wind their arms tighter (Seigar et al. 2008).
-    // That is the pitch of the arms we want to SEE; the stars' forced response winds
-    // ~1.5-2x tighter than the potential driving it, so the potential is opened by 16°.
+    // The arms we see wind a little tighter than the potential that drives them.
     const x2 = g.Rcr * g.Rcr, fH = g.vh * g.vh * x2 / (x2 + g.rc * g.rc), fK = k.G * bh.m / g.Rcr;
     const Gam = 1 - 0.5 * (fH * 2 * g.rc * g.rc / (x2 + g.rc * g.rc) - fK) / (fH + fK);
-    g.pitch = clamp(Math.atan((2 / 7) * Math.sqrt(4 - 2 * Gam) / Gam) / DEG + 16 + k.pitchOff - 16 * Math.log10(mu), 42, 58);
+    g.pitch = clamp(Math.atan((2 / 7) * Math.sqrt(4 - 2 * Gam) / Gam) / DEG + T.pitchOpen + k.pitchOff - 16 * Math.log10(mu), T.pitchLo, T.pitchHi);
     if (g.spin) g.phase += g.spin * g.omegaP * dt;
     g.nu = 0.8 - (0.8 - k.nuDisk) * g.amp;
     g.rcav = k.fCav * sim.horizon() + 2;
@@ -542,7 +562,7 @@
       let ax = -aH * dx, ay = -aH * dy;
       Hx += mi * ax; Hy += mi * ay;
       // Settling toward circular orbits (relative to the galaxy's bulk motion).
-      const w = r < R ? g.on : g.on * Math.exp(-(r - R) / 25);
+      const w = r < R ? g.on : g.on * Math.exp(-(r - R) / T.outerLen);
       sw[i] = 0;
       if (w > 0.01) {
         const dvx = VX[i] - Vx, dvy = VY[i] - Vy;
@@ -565,9 +585,11 @@
           // Stars keep (on average) the angular momentum they were born with, so the
           // dissipative settling does not let the arms' torque drain them inward.
           const rt = k.starJ && RT[i] > 0 ? RT[i] : r;
-          // Near corotation stars barely move against the pattern: friction there would
-          // sink them into the arm's potential minimum, so it fades out by 0.95·R_CR.
-          const fc = r < rCo0 ? 1 : r > rCo1 ? 0 : (rCo1 - r) / (rCo1 - rCo0);
+          // Near corotation stars barely move against the pattern: full friction there
+          // would sink them into the arm's potential minimum, so by 0.95·R_CR it eases to a
+          // gentle fraction, enough to keep outer stars from drifting off the disk.
+          const fo = T.outerStar;
+          const fc = r < rCo0 ? 1 : r > rCo1 ? fo : fo + (1 - fo) * (rCo1 - r) / (rCo1 - rCo0);
           ar = -nuStar * fc * vr; at = nuStar * fc * (spin * rt * vcAt(rt) / r - vt);
         }
         sx[i] = w * (ar * dx - at * dy) / r; sy[i] = w * (ar * dy + at * dx) / r; sw[i] = w;
@@ -658,10 +680,11 @@
     galaxyForces(this);
     // Dynamical friction: once its halo has gathered, the hole anchors a galaxy far heavier
     // than itself. Left unsteered, it coasts to rest instead of wandering off into a wall
-    // and dragging its galaxy with it. (Steering still works: thrust is applied above.)
+    // and dragging its galaxy with it, and drifts slowly to the middle of the box so the
+    // walls don't clip the galaxy. (Steering still works: thrust is applied above.)
     if (g && g.on > 0 && !this.control) {
-      const nu = 0.6 * g.on;
-      this.bh.ax -= nu * this.bh.vx; this.bh.ay -= nu * this.bh.vy;
+      const nu = 0.6 * g.on, kc = T.center * g.on;
+      this.bh.ax -= nu * this.bh.vx + kc * this.bh.x; this.bh.ay -= nu * this.bh.vy + kc * this.bh.y;
     }
   };
 })(typeof window !== 'undefined' ? window.MOTE : globalThis.MOTE);

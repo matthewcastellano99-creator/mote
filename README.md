@@ -2,7 +2,7 @@
 
 You are a black hole, born small, in a sealed box of dust.
 
-Fly through the gas and feed: every mote that crosses your event horizon makes you heavier, your horizon wider and your gravity stronger. Each level is a fresh universe with its own randomly drawn physical constants, plugged into real equations. Grow to about three times your starting mass and a dark halo gathers around you; the gas starts to wheel, star clusters ignite, and every level ends the same way: **a spiral galaxy, centred on you**, different every time.
+Fly through the gas and feed: every mote that crosses your event horizon makes you heavier, your horizon wider and your gravity stronger. Each level is a fresh universe with its own randomly drawn physical constants, plugged into real equations. Grow to about three times your starting mass and a dark halo gathers around you; the gas starts to wheel, star clusters ignite, and every level ends the same way: **a spiral galaxy, centred on you**, different every time. It has three to six tightly wound arms, traced by about 4,500 stars and motes.
 
 ## Play
 
@@ -40,13 +40,16 @@ The box is sealed: walls reflect matter with restitution, so nothing escapes. On
 `src/galaxy.js` adds the galaxy on top of the box. Once you have fed to 2.5–3.2× your starting mass:
 
 - **A dark halo** centred on you gives a flat rotation curve (a cored isothermal profile); its speed follows the M–σ relation and its size your sphere of influence.
-- **Gas settles** toward circular orbits in the disk's own sense of rotation, while thermostats hold the disk at Toomre Q ≈ 1.5, warm enough not to shatter into clumps and cold enough to respond to arms.
-- **A density wave** (Lin–Shu): a rigidly rotating logarithmic spiral potential with m arms switches on as the disk becomes coherent. Its pitch comes from the shear at corotation, and heavier holes wind their arms tighter, as observed. Gas piles into the arms, where the Jeans mass drops with surface density, so new clusters (and their short-lived blue stars) light the arms up.
+- **Gas settles** toward circular orbits in the disk's own sense of rotation, while thermostats hold the disk at Toomre Q ≈ 1.2: warm enough not to shatter into clumps, and cold enough that the arms stay crisp.
+- **A density wave** (Lin–Shu): a rigidly rotating logarithmic spiral potential with m arms switches on as the disk becomes coherent. The arm count, 3 to 6, follows swing amplification: a heavier halo relative to the disk means more arms. Arms wind at 10°–18°; the pitch comes from the shear at corotation, and heavier holes wind their arms tighter, as observed. Gas piles into the arms, where the Jeans mass drops with surface density, so new clusters (and their short-lived blue stars) light the arms up.
+- **Fine resolution.** Each unit of mass is three motes, so the box holds about 5,000 to 7,000 of them, and every cluster, supernova shell and tidal stream splits into proportionally many pieces. The physics doesn't depend on the count, since total mass is the same; the extra points are there to trace thin arms.
 - **Mass is conserved.** Nothing is deleted except what you eat. Past your maximum mass, what falls in is blown back out as an accretion-disk wind.
 
-Where it departs from reality, on purpose: the halo and the spiral potential are imposed rather than self-consistent; stars as well as gas feel a gentle settling toward circular orbits; star particles are softened so clusters dissolve into the disk; and an unsteered hole is held at rest by dynamical friction against its galaxy.
+Where it departs from reality, on purpose: the halo and the spiral potential are imposed rather than self-consistent; stars as well as gas feel a gentle settling toward circular orbits, which continues, weaker, beyond corotation, so the disk keeps a clean edge instead of shedding stars; star particles are softened so clusters dissolve into the disk; and an unsteered hole is held at rest by dynamical friction against its galaxy and drifts slowly to the middle of the box, so the walls don't clip its outer arms.
 
-The arms are measured, not assumed: `measure.js` finds the strongest m-fold pattern (m = 1–4) in log-radius rings around you, subtracts what random scatter would give, and checks that its phase winds like a logarithmic spiral at a pitch of 8°–50°. That score drives the galaxy goal and the name in the archive (Sb tight, Sc open, Sd loose).
+The arms are measured, not assumed. `measure.js` runs the log-spiral Fourier transform astronomers use on galaxy images: for every arm count m = 2–8 and winding, it asks how strongly the stars and gas around you line up along logarithmic spirals. It discounts what random scatter would give, and rejects bars and ovals, which have no winding. The strongest pattern sets the galaxy goal's score and the name in the archive: its arm count, and its Hubble type from the pitch (Sa tightest, through Sb and Sc, to Sd loosest).
+
+What you see is drawn to match: besides each star and mote as a point, the renderer blurs their number density over a few particle spacings into a glow, so the arms read as bands of light, warm where stars are and blue where gas is.
 
 ## Goals
 
@@ -66,9 +69,9 @@ Plain scripts sharing a `window.MOTE` namespace, loaded in order by `index.html`
 - `src/sim.js`: the box. Barnes–Hut gravity for the dust, direct sums for the black hole, stick-or-bounce collisions on a grid, accretion, tides, Hawking radiation, Jeans collapse, supernovae, walls. Runs in Node too.
 - `src/level.js`: drawing constants and goals for a level.
 - `src/galaxy.js`: the galaxy layer described above; it extends `Sim` and `generateLevel` in place, and replaces the gravity tree with a faster bucketed one.
-- `src/measure.js`: what orbits you, the spiral-arm score, and naming the structure.
+- `src/measure.js`: what orbits you, the log-spiral arm score, and naming the structure.
 - `src/game.js`: goals, winning and evaporating, the archive, saving.
-- `src/render.js`: canvas drawing.
+- `src/render.js`: canvas drawing, including the galaxy's glow.
 - `src/ui.js`: HUD, briefing, results, archive.
 - `src/main.js`: the loop and controls.
 

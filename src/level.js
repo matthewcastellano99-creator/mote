@@ -6,6 +6,9 @@
   const M0 = 60;          // starting mass of the black hole, in mote masses
   const JEANS = 8000;     // M_J = JEANS · (T / G)^(3/2), in mote masses
   const KELVIN = 40;      // display scale for temperature: 5–35 K, like a molecular cloud
+  // Resolution: motes per unit of mass. The box holds the same mass at any resolution, so
+  // the physics is unchanged; there are just more, lighter motes to trace finer structure.
+  const RESOLUTION = (typeof globalThis !== 'undefined' && globalThis.MOTE_RES) || 3; // MOTE_RES: for testing
 
   // Every level ends the same way: a spiral galaxy around you, held for a while.
   // Its target is the arm-strength score (measure.js) × 100: 15 is clearly visible.
@@ -87,6 +90,7 @@
       kappa: between(0.5, 1.6),
       thrust: 90,
       Mfail: M0 * 0.25,
+      mote: 1 / RESOLUTION,                           // mean mass of one mote
     };
     // You begin near an edge: the cloud collapses toward the middle without you.
     const box = arena(aspect);
@@ -98,7 +102,7 @@
     const goals = [...(tutorial ? tutorial.goals : randomGoals(r, d)), galaxy(d)];
     return {
       number, seed, ...box, start,
-      count: Math.round(1700 + 500 * d + 200 * r()),
+      count: Math.round((1700 + 500 * d + 200 * r()) * RESOLUTION),
       constants,
       goals: goals.map((g) => ({ ...g })),
       tip: tutorial ? tutorial.tip : null,
