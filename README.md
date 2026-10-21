@@ -11,7 +11,7 @@ Open `index.html` in a browser. No build step and no dependencies; your level an
 - **Steer:** hold the mouse or a finger where you want to go, or use WASD / arrow keys. Space brakes. Once your galaxy has formed, an unsteered hole coasts to rest at its centre.
 - **Time:** the Time slider runs the simulation from 0.1× (slow motion, for threading a Roche limit) to 5× (fast-forward while a galaxy winds up). `[` and `]` step through speeds, and the readout resets to 1×. Fast-forward takes more physics steps per frame; slow motion takes smaller ones, so both stay accurate. If a device can't keep up, the control shows the speed it is actually reaching.
 - **Pause:** P or Esc. The briefing card shows the level's constants and goals.
-- **Cosmic time:** next to your mass, the HUD counts how long your galaxy would really have taken to form, from a few million years to billions. The result card and the archive keep it too.
+- **Cosmic time:** next to your mass, the HUD shows how old your galaxy would be if it turned at the Milky Way's pace, from a few million years to billions. The result card and the archive keep it too.
 - **Finishing a level:** choose *Keep watching* to let the galaxy mature (young galaxies keep winding up), then *Next level*. The archive keeps it as it looks when you move on, named by its arms and Hubble type, with the constants it was built under.
 
 ## The physics
@@ -38,9 +38,9 @@ The box is sealed: walls reflect matter with restitution, so nothing escapes. On
 
 ### Cosmic time
 
-The game runs in seconds; the clock in the HUD converts them to years by treating each level's galaxy as a scale model of the Milky Way. The Milky Way's spiral pattern turns once in about 230 million years, and the Sun, near corotation, orbits in about the same time: a galactic year. In the game the arms turn once every 2π·R_CR / v_h, with R_CR the corotation radius and v_h the halo's circular speed, taken when the galaxy forms. Calling that turn one galactic year fixes the years per second, shown as `1 s` among the derived constants: usually 4–7 million years, depending on how fast that universe's galaxy spins.
+The game runs in seconds; the clock in the HUD converts them to years by treating each level's galaxy as a scale model of the Milky Way. The Milky Way's spiral pattern turns once in about 230 million years, and the Sun, near corotation, orbits in about the same time: a galactic year. In the game the arms turn once every 2π·R_CR / v_h, with R_CR a radius near the disk's edge and v_h the halo's flat (outer) circular speed, taken when the galaxy forms. Calling that turn one galactic year fixes the years per second, shown as `1 s` among the derived constants: usually 4–7 million years, depending on how fast that universe's galaxy spins.
 
-So a galaxy grown in a minute is a few hundred million years old, and one you keep watching ages into the billions. The massive cluster stars that go supernova within seconds live tens of millions of years on this clock, as real B stars do.
+So a galaxy grown in a minute is a few hundred million years old, and one you keep watching ages into the billions. The massive cluster stars that go supernova within seconds live a few million to a few tens of millions of years on this clock, like the real O and early-B stars that end as supernovae.
 
 ### How the galaxy forms
 

@@ -32,7 +32,7 @@
     { sym: 'M<sub>halo</sub>', name: 'Your mass when the dark halo gathers and the galaxy begins', value: (k) => `${Math.round(2.5 * k.M0)}–${Math.round(Math.min(3.2 * k.M0, k.Mcap))} M` },
     { sym: 'M<sub>max</sub>', name: 'Your largest mass: past it, what falls in is blown back out', value: (k) => `${Math.round(k.Mcap)} M` },
     { sym: 'd<sub>R</sub>', name: 'Roche limit: tides tear apart what comes closer', value: () => '2.44·R·(M/m)<sup>1/3</sup>' },
-    { sym: '1 s', name: (k) => `Cosmic time per second: the arms here turn once every ${Math.round(k.tGal)} s, the Milky Way's once every ~230 million years (Myr)`, value: (k) => myr(k) },
+    { sym: '1 s', name: (k) => `Years per second: when your galaxy forms, its arms turn about once every ${Math.round(k.tGal)} s; the Milky Way's turn once every ~230 million years (Myr)`, value: (k) => myr(k) },
   ];
   // The years one second of play stands for, as "5.3 Myr".
   const myr = (k) => `${(k.yearsPerSec / 1e6).toFixed(1)} Myr`;
@@ -169,6 +169,9 @@
     }
 
     onEvent(type, data) {
+      // The HUD refreshes a few times a second while running; catch it up when play stops,
+      // so its age matches the result card.
+      if (type === 'paused' || type === 'complete' || type === 'failed') this.update();
       if (type === 'setup') {
         this.toastCount = {};
         this.olderThanUniverse = false;
