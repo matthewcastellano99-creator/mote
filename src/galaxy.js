@@ -58,6 +58,12 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
   const radiusFor = (m, kind) => (kind === STAR ? 1.1 : 0.9) * Math.cbrt(m);
+  // The disk reaches four scale lengths out, or as far as the box allows.
+  const diskEdge = (h, W, H) => Math.min(4 * h, Math.min(W, H) * 0.44);
+  // A galactic year: the Milky Way's spiral pattern turns once in about 230 million
+  // years (Ω_p ≈ 25–28 km/s/kpc), and the Sun, close to corotation, orbits in about the
+  // same time.
+  const GALACTIC_YEAR = 230e6;
   // The galaxy's character, chosen by sweeping these against the spiral-arm score and how
   // much of the disk stays put when the player sits still: 3–6 arms (from the halo-to-disk
   // mass ratio), arms wound at 10–18°, strong arm forcing, a cold disk, gentle settling
@@ -111,6 +117,11 @@
     // the whole disk sits between the Lindblad resonances (|ν| < 1): the forced response
     // is a smooth log spiral from the nucleus to the edge, with no ring at an ILR.
     k.fCR = between(0.92, 1.08);      // corotation radius / disk radius
+    // Cosmic time. The galaxy is a scale model of the Milky Way: its arms turn once every
+    // 2π·R_CR / v_h (when it forms, at 3·M0), and that turn is this universe's galactic
+    // year, so it sets how many years each second of play stands for.
+    k.tGal = 2 * Math.PI * k.fCR * diskEdge(k.hDisk, level.W, level.H) / k.vHalo;
+    k.yearsPerSec = GALACTIC_YEAR / k.tGal;
     k.pitchOff = between(-7, 7);      // pitch-angle offset from the disk's self-gravity (deg)
     k.cCore = 1 - 1 / k.arms;         // r_core / R_CR
     k.fCav = 1.2;                     // the hole's feedback keeps gas out of fCav·r_s + 2
@@ -446,7 +457,7 @@
     g.on = Math.max(g.on, smooth(2.5 * k.M0, Math.min(3.2 * k.M0, k.Mcap), bh.m));
     g.vh = k.vHalo * Math.pow(mu, 0.25);                                   // M–σ
     g.h = k.hDisk * Math.sqrt(mu);                                         // ∝ GM/σ²
-    g.R = Math.min(4 * g.h, Math.min(sim.W, sim.H) * 0.44);
+    g.R = diskEdge(g.h, sim.W, sim.H);
     g.Rcr = k.fCR * g.R;
     g.omegaP = g.vh / g.Rcr;
     g.rc = k.cCore * g.Rcr;

@@ -59,6 +59,8 @@ button.danger { color: var(--danger); border-color: rgba(255, 138, 168, 0.3); }
 .mass { font-size: 30px; line-height: 1.1; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .mass small { font-size: 13px; color: var(--muted); }
 .mass.danger #mass { color: var(--danger); animation: pulse 0.8s ease-in-out infinite alternate; }
+.age { font-size: 16px; margin-left: 16px; }
+.age small { font-size: 12px; }
 @keyframes pulse { to { opacity: 0.55; } }
 .readouts { display: flex; gap: 14px; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 #net.gain { color: var(--orbit); }
@@ -226,6 +228,8 @@ dialog footer { margin-top: 20px; text-align: right; }
 /* Phones: constants become an overlay, goals sit above the action bar. */
 @media (max-width: 720px) {
   .mass { font-size: 24px; }
+  .age { font-size: 14px; margin-left: 12px; }
+  .age small { font-size: 11px; }
   .readouts { gap: 10px; font-size: 10.5px; }
   #consts { display: none; top: calc(var(--top) + 96px); }
   #consts.open { display: block; }

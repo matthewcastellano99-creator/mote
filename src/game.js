@@ -15,6 +15,16 @@
   function newSeed() { return (Math.random() * 2 ** 31) >>> 0; }
   MOTE.goalText = (g) => GOAL_TEXT[g.type](g);
 
+  // Cosmic time as [number, unit], to three significant figures: "640" "million years".
+  MOTE.formatYears = (y) => {
+    if (!(y > 0)) return ['0', 'years'];
+    if (y >= 0.9995e9) return [(y / 1e9).toFixed(y >= 99.95e9 ? 0 : y >= 9.995e9 ? 1 : 2), 'billion years'];
+    if (y >= 0.9995e6) return [(y / 1e6).toFixed(y >= 99.95e6 ? 0 : y >= 9.995e6 ? 1 : 2), 'million years'];
+    if (y >= 999.5) return [String(Math.round(y / 1e3)), 'thousand years'];
+    return [String(Math.round(y)), Math.round(y) === 1 ? 'year' : 'years'];
+  };
+  MOTE.yearsText = (y) => MOTE.formatYears(y).join(' ');
+
   function freshSave() {
     return { level: 1, best: 1, seed: newSeed(), archive: [], seenIntro: false, timeScale: 1 };
   }
@@ -51,6 +61,8 @@
     // After winning, the galaxy keeps evolving for as long as the player cares to watch.
     admire() { if (this.status === 'complete') { this.status = 'admiring'; this.emit('admiring'); } }
     get running() { return this.status === 'playing' || this.status === 'admiring'; }
+    // Cosmic time since the cloud began: seconds of play, scaled to the Milky Way.
+    get years() { return this.sim ? this.sim.time * (this.level.constants.yearsPerSec || 0) : 0; }
 
     // Called a few times per second of simulated time.
     tick(dt) {
@@ -105,6 +117,7 @@
         img: snapshot,
         mass: Math.round(this.sim.bh.m),
         time: Math.round(this.sim.time),
+        years: Math.round(this.years),
         stars: fm.stars,
         constants: { G: k.G, c: k.c, T: k.T, eta: k.eta },
         when: Date.now(),

@@ -32,7 +32,11 @@
     { sym: 'M<sub>halo</sub>', name: 'Your mass when the dark halo gathers and the galaxy begins', value: (k) => `${Math.round(2.5 * k.M0)}–${Math.round(Math.min(3.2 * k.M0, k.Mcap))} M` },
     { sym: 'M<sub>max</sub>', name: 'Your largest mass: past it, what falls in is blown back out', value: (k) => `${Math.round(k.Mcap)} M` },
     { sym: 'd<sub>R</sub>', name: 'Roche limit: tides tear apart what comes closer', value: () => '2.44·R·(M/m)<sup>1/3</sup>' },
+    { sym: '1 s', name: (k) => `Cosmic time per second: the arms here turn once every ${Math.round(k.tGal)} s, the Milky Way's once every ~230 million years (Myr)`, value: (k) => myr(k) },
   ];
+  // The years one second of play stands for, as "5.3 Myr".
+  const myr = (k) => `${(k.yearsPerSec / 1e6).toFixed(1)} Myr`;
+  const UNIVERSE_AGE = 13.8e9;
 
   // Time runs from 0.1× to 5× on a logarithmic slider, with a detent at 1×.
   const TIME_MIN = 0.1, TIME_MAX = 5, TIME_RES = 1000;
@@ -167,6 +171,7 @@
     onEvent(type, data) {
       if (type === 'setup') {
         this.toastCount = {};
+        this.olderThanUniverse = false;
         $('#pause').textContent = 'Pause';
         $('#pause').classList.remove('primary');
         this.fillLevel();
@@ -224,11 +229,12 @@
           <span class="about">${c.name}<span>${c.eq}</span></span></div>`).join('')
         + DERIVED.map((d) => `<div class="derived">
           <span class="sym">${d.sym}</span><span class="val">${d.value(k)}</span>
-          <span class="about">${d.name}</span></div>`).join('');
+          <span class="about">${typeof d.name === 'function' ? d.name(k) : d.name}</span></div>`).join('');
       $('#const-list').innerHTML = `<dl class="kv">${CONSTANTS.map((c) =>
         `<dt>${c.sym}</dt><dd title="${c.name}">${c.fmt(k[c.key])}</dd>`).join('')}
         <div class="sep"></div>
-        <dt class="derived">M<sub>J</sub></dt><dd class="derived" title="Jeans mass">${Math.round(k.MJ)} M</dd></dl>`;
+        <dt class="derived">M<sub>J</sub></dt><dd class="derived" title="Jeans mass">${Math.round(k.MJ)} M</dd>
+        <dt class="derived">1 s</dt><dd class="derived" title="Cosmic time per second of play">${myr(k)}</dd></dl>`;
       this.goalCards(g.goals);
       this.update();
     }
@@ -247,6 +253,13 @@
       if (!sim) return;
       const bh = sim.bh, k = sim.k;
       $('#mass').textContent = Math.round(bh.m);
+      const [age, unit] = MOTE.formatYears(g.years);
+      $('#age').textContent = age;
+      $('#age-unit').textContent = unit;
+      if (g.years > UNIVERSE_AGE && !this.olderThanUniverse) {
+        this.olderThanUniverse = true;
+        this.toast('Your galaxy is now <b>older than our universe</b>: 13.8 billion years.', 'good');
+      }
       $('.mass').classList.toggle('danger', bh.m < k.M0 * 0.6 && bh.net < 0);
       const net = $('#net');
       net.textContent = `${bh.net >= 0 ? '+' : '−'}${Math.abs(bh.net).toFixed(1)} M/s${bh.net < 0 ? ' · evaporating' : ''}`;
@@ -297,9 +310,10 @@
       const name = MOTE.classify(sim, fm);
       $('#result-img').src = img;
       $('#result-title').textContent = `Level ${g.level.number}: ${name}`;
+      const took = `${MOTE.yearsText(g.years)} (${Math.round(sim.time)} s of play)`;
       $('#result-text').textContent = sp.score > 0
-        ? `In ${Math.round(sim.time)} s you grew to ${Math.round(sim.bh.m)} M and built a galaxy around yourself: ${sp.m} arm${sp.m === 1 ? '' : 's'} winding out at a ${Math.round(sp.pitch)}° pitch, ${fm.stars.toLocaleString()} stars from ${sim.stats.starsFormed} clusters.`
-        : `You shaped a ${name.toLowerCase()} in ${Math.round(sim.time)} s, at ${Math.round(sim.bh.m)} M.`;
+        ? `In ${took} you grew to ${Math.round(sim.bh.m)} M and built a galaxy around yourself: ${sp.m} arm${sp.m === 1 ? '' : 's'} winding out at a ${Math.round(sp.pitch)}° pitch, ${fm.stars.toLocaleString()} stars from ${sim.stats.starsFormed} clusters.`
+        : `You shaped a ${name.toLowerCase()} in ${took}, at ${Math.round(sim.bh.m)} M.`;
       $('#result-text').textContent += ' Young galaxies keep winding up: keep watching, and the archive keeps it as it looks when you move on.';
       this.actions([
         ['Keep watching', '', () => g.admire()],
@@ -350,7 +364,9 @@
         const meta = document.createElement('span');
         const c = p.constants;
         const arms = p.arms ? `${p.arms} arm${p.arms === 1 ? '' : 's'} · ${p.pitch}° pitch · ` : '';
-        meta.textContent = `${arms}${p.mass} M · ${p.stars.toLocaleString()}★ · ${p.time}s\nG ${c.G.toFixed(1)} · c ${c.c.toFixed(0)} · T ${Math.round(c.T * MOTE.KELVIN)} K · η ${Math.round(c.eta * 100)}%`;
+        // Plates from before cosmic time was kept show their seconds of play instead.
+        const age = p.years ? MOTE.yearsText(p.years) : `${p.time} s`;
+        meta.textContent = `${arms}${p.mass} M · ${p.stars.toLocaleString()}★\nage ${age}\nG ${c.G.toFixed(1)} · c ${c.c.toFixed(0)} · T ${Math.round(c.T * MOTE.KELVIN)} K · η ${Math.round(c.eta * 100)}%`;
         meta.style.whiteSpace = 'pre-line';
         cap.appendChild(meta);
         fig.append(img, cap);
